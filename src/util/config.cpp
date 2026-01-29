@@ -35,6 +35,9 @@ bool regex = false;
 bool log_flag = false;
 bool ds_enhanced_mode = false;
 int filter_mode = 0;
+bool recorder_enable_keyboard = true;
+bool recorder_enable_mouse = true;
+bool recorder_enable_gamepad = true;
 uint16_t server_refresh_rate = 250;
 uint16_t server_port = 1608;
 uint16_t wss_port = 16899;
@@ -61,6 +64,11 @@ void set_defaults()
     CDEF_BOOL(S_DS_ENHANCED_MODE, ds_enhanced_mode);
     CDEF_BOOL(S_CONTROL, enable_input_control);
     CDEF_BOOL(S_REGEX, regex);
+    
+    // Event recorder defaults
+    CDEF_BOOL(S_RECORDER_ENABLE_KEYBOARD, recorder_enable_keyboard);
+    CDEF_BOOL(S_RECORDER_ENABLE_MOUSE, recorder_enable_mouse);
+    CDEF_BOOL(S_RECORDER_ENABLE_GAMEPAD, recorder_enable_gamepad);
 }
 
 void load()
@@ -78,6 +86,11 @@ void load()
     wss_bind_address = CGET_STR(S_WSS_ADDRESS);
     regex = CGET_BOOL(S_REGEX);
     ds_enhanced_mode = CGET_BOOL(S_DS_ENHANCED_MODE);
+    
+    // Event recorder settings
+    recorder_enable_keyboard = CGET_BOOL(S_RECORDER_ENABLE_KEYBOARD);
+    recorder_enable_mouse = CGET_BOOL(S_RECORDER_ENABLE_MOUSE);
+    recorder_enable_gamepad = CGET_BOOL(S_RECORDER_ENABLE_GAMEPAD);
 }
 
 void save()
@@ -96,6 +109,11 @@ void save()
     CSET_STR(S_WSS_ADDRESS, wss_bind_address.c_str());
     CSET_INT(S_FILTER_MODE, filter_mode);
     CSET_BOOL(S_DS_ENHANCED_MODE, ds_enhanced_mode);
+    
+    // Event recorder settings
+    CSET_BOOL(S_RECORDER_ENABLE_KEYBOARD, recorder_enable_keyboard);
+    CSET_BOOL(S_RECORDER_ENABLE_MOUSE, recorder_enable_mouse);
+    CSET_BOOL(S_RECORDER_ENABLE_GAMEPAD, recorder_enable_gamepad);
 }
 
 }

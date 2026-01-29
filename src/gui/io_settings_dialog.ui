@@ -96,6 +96,37 @@
         </widget>
        </item>
        <item>
+        <widget class="QLabel" name="lbl_recorder_settings">
+         <property name="text">
+          <string>Dialog.EventRecorder.Settings</string>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">font-weight: bold; margin-top: 10px;</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_recorder_keyboard">
+         <property name="text">
+          <string>Dialog.EventRecorder.RecordKeyboard</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_recorder_mouse">
+         <property name="text">
+          <string>Dialog.EventRecorder.RecordMouse</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_recorder_gamepad">
+         <property name="text">
+          <string>Dialog.EventRecorder.RecordGamepad</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QCheckBox" name="cb_enable_control">
          <property name="text">
           <string>Dialog.InputControl.Enable</string>

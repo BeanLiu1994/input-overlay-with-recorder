@@ -18,9 +18,15 @@
 
 #include "event_recorder.hpp"
 #include "../util/log.h"
+#include "../util/config.hpp"
 #include <util/platform.h>
 #include <fstream>
 #include <chrono>
+#include <cstring>
+
+#ifdef _WIN32
+#include "windows_raw_input.hpp"
+#endif
 
 namespace recorder {
 
@@ -55,6 +61,12 @@ void EventRecorder::start_recording(const std::string& output_path)
     binfo("[EventRecorder] Starting event recording");
     binfo("[EventRecorder] Output file: %s", output_path.c_str());
     
+#ifdef _WIN32
+    binfo("[EventRecorder] Using Windows Raw Input API for high-precision capture");
+#else
+    binfo("[EventRecorder] Using uiohook for cross-platform capture");
+#endif
+    
     // Clear the queue
     size_t old_queue_size = event_queue.size();
     event_queue.clear();
@@ -65,12 +77,67 @@ void EventRecorder::start_recording(const std::string& output_path)
     output_file_path = output_path;
     recording_start_time = os_gettime_ns();
     last_event_time = recording_start_time;
+    
+    // Write START line with global timestamp to file
+    std::ofstream file(output_file_path, std::ios::trunc); // Create/truncate file
+    if (file.is_open()) {
+        // Convert recording_start_time (nanoseconds) to Unix timestamp (seconds.milliseconds)
+        uint64_t start_time_ms = recording_start_time / 1000000; // Convert ns to ms
+        uint64_t seconds = start_time_ms / 1000;
+        uint64_t milliseconds = start_time_ms % 1000;
+        
+        // Format: 0.000 START <unix_timestamp_seconds>.<milliseconds>
+        char start_line[128];
+        snprintf(start_line, sizeof(start_line), "0.000 START %llu.%03llu\n", 
+                 (unsigned long long)seconds, (unsigned long long)milliseconds);
+        
+        file.write(start_line, strlen(start_line));
+        file.close();
+        binfo("[EventRecorder] Wrote START line with Unix timestamp: %llu.%03llu", 
+              (unsigned long long)seconds, (unsigned long long)milliseconds);
+    } else {
+        berr("[EventRecorder] Failed to create output file: %s", output_path.c_str());
+    }
+    
     is_recording.store(true, std::memory_order_release);
     should_stop_writer.store(false, std::memory_order_release);
     
     // Start writer thread
     writer_thread = std::thread(&EventRecorder::writer_thread_func, this);
     binfo("[EventRecorder] Writer thread started");
+    
+#ifdef _WIN32
+    // Initialize and start Windows Raw Input capture
+    raw_input::init();
+    
+    // Set up callbacks to forward events to recorder
+    raw_input::set_keyboard_callback([this](uint16_t vkey, uint16_t scancode, bool pressed, uint64_t timestamp_ns) {
+        // Convert Windows virtual key to uiohook keycode (approximate mapping)
+        // For now, use vkey directly - you may want to add proper mapping
+        this->record_keyboard_event(vkey, pressed, timestamp_ns);
+    });
+    
+    raw_input::set_mouse_button_callback([this](uint16_t button, int16_t x, int16_t y, bool pressed, uint64_t timestamp_ns) {
+        this->record_mouse_button_event(button, x, y, pressed, timestamp_ns);
+    });
+    
+    raw_input::set_mouse_move_callback([this](int16_t x, int16_t y, int16_t dx, int16_t dy, uint64_t timestamp_ns) {
+        this->record_mouse_move_event(x, y, dx, dy, timestamp_ns);
+    });
+    
+    raw_input::set_mouse_wheel_callback([this](int16_t delta, uint64_t timestamp_ns) {
+        // Convert delta to rotation (1 for up, -1 for down)
+        int16_t rotation = (delta > 0) ? 1 : -1;
+        this->record_mouse_wheel_event(rotation, delta, timestamp_ns);
+    });
+    
+    if (!raw_input::start_capture()) {
+        berr("[EventRecorder] Failed to start Windows Raw Input capture");
+    } else {
+        binfo("[EventRecorder] Windows Raw Input capture started successfully");
+    }
+#endif
+    
     binfo("[EventRecorder] Recording is now ACTIVE");
     binfo("[EventRecorder] ========================================");
 }
@@ -84,6 +151,14 @@ void EventRecorder::stop_recording()
 
     binfo("[EventRecorder] ========================================");
     binfo("[EventRecorder] Stopping event recording");
+    
+#ifdef _WIN32
+    // Stop Windows Raw Input capture first
+    binfo("[EventRecorder] Stopping Windows Raw Input capture");
+    raw_input::stop_capture();
+    raw_input::cleanup();
+#endif
+    
     size_t remaining_events = event_queue.size();
     binfo("[EventRecorder] Queue has %zu events remaining to save", remaining_events);
     
@@ -187,15 +262,22 @@ bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
     for (const auto& event : events) {
         std::string line;
         
-        // Format: timestamp_ns event_type event_data
-        line = std::to_string(event.timestamp) + " ";
+        // Calculate relative timestamp in microseconds from recording start (for sub-millisecond precision)
+        uint64_t relative_time_us = (event.timestamp - recording_start_time) / 1000;
+        
+        // Format: timestamp_us event_type event_data
+        // Output format: microseconds with 3 decimal places (e.g., "2366.123" = 2.366123 seconds)
+        uint64_t ms_part = relative_time_us / 1000;
+        uint64_t us_part = relative_time_us % 1000;
+        line = std::to_string(ms_part) + "." + 
+               (us_part < 100 ? (us_part < 10 ? "00" : "0") : "") + std::to_string(us_part) + " ";
         
         switch (event.type) {
             case EventType::KEYBOARD_PRESS:
-                line += "KEY_PRESS " + std::to_string(event.data.keyboard.keycode);
+                line += "KEY_DOWN " + std::to_string(event.data.keyboard.keycode);
                 break;
             case EventType::KEYBOARD_RELEASE:
-                line += "KEY_RELEASE " + std::to_string(event.data.keyboard.keycode);
+                line += "KEY_UP " + std::to_string(event.data.keyboard.keycode);
                 break;
             case EventType::MOUSE_PRESS:
                 line += "MOUSE_PRESS " + std::to_string(event.data.mouse.button) + " " +
@@ -207,7 +289,9 @@ bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
                 break;
             case EventType::MOUSE_MOVE:
                 line += "MOUSE_MOVE " + std::to_string(event.data.mouse.x) + " " + 
-                        std::to_string(event.data.mouse.y);
+                        std::to_string(event.data.mouse.y) + " " +
+                        std::to_string(event.data.mouse.dx) + " " +
+                        std::to_string(event.data.mouse.dy);
                 break;
             case EventType::MOUSE_WHEEL:
                 line += "MOUSE_WHEEL " + std::to_string(event.data.wheel.rotation) + " " +
@@ -227,8 +311,8 @@ bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
                         std::to_string(event.data.gamepad_axis.value);
                 break;
             case EventType::SLEEP:
-                line += "SLEEP " + std::to_string(event.data.sleep.duration_ns);
-                break;
+                // Skip SLEEP events - timing is handled by timestamps
+                continue;
             default:
                 line += "UNKNOWN";
                 break;
@@ -257,16 +341,9 @@ void EventRecorder::record_keyboard_event(uint16_t keycode, bool pressed, uint64
         return;
     }
     
-    // Calculate sleep time since last event
-    if (last_event_time > 0 && timestamp > last_event_time) {
-        uint64_t sleep_duration = timestamp - last_event_time;
-        if (sleep_duration > 1000000) { // Only record sleeps > 1ms
-            RecordedEvent sleep_event;
-            sleep_event.type = EventType::SLEEP;
-            sleep_event.timestamp = last_event_time;
-            sleep_event.data.sleep.duration_ns = sleep_duration;
-            event_queue.enqueue(sleep_event);
-        }
+    // Check if keyboard recording is enabled
+    if (!io_config::recorder_enable_keyboard) {
+        return;
     }
     
     RecordedEvent event;
@@ -275,14 +352,21 @@ void EventRecorder::record_keyboard_event(uint16_t keycode, bool pressed, uint64
     event.data.keyboard.keycode = keycode;
     
     event_queue.enqueue(event);
-    last_event_time = timestamp;
     
+    // Log timing precision for debugging
     static size_t keyboard_event_count = 0;
+    static uint64_t last_keyboard_time = 0;
     keyboard_event_count++;
-    if (keyboard_event_count % 100 == 0) {
-        binfo("[EventRecorder] Recorded %zu keyboard events (queue: %zu)", 
-              keyboard_event_count, event_queue.size());
+    
+    if (keyboard_event_count <= 10 || keyboard_event_count % 100 == 0) {
+        uint64_t interval_ns = last_keyboard_time > 0 ? (timestamp - last_keyboard_time) : 0;
+        double interval_ms = interval_ns / 1000000.0;
+        binfo("[EventRecorder] Keyboard event #%zu: keycode=%u, pressed=%d, interval=%.3fms (queue: %zu)", 
+              keyboard_event_count, keycode, pressed, interval_ms, event_queue.size());
     }
+    
+    last_keyboard_time = timestamp;
+    last_event_time = timestamp;
 }
 
 void EventRecorder::record_mouse_button_event(uint16_t button, int16_t x, int16_t y, bool pressed, uint64_t timestamp)
@@ -291,16 +375,9 @@ void EventRecorder::record_mouse_button_event(uint16_t button, int16_t x, int16_
         return;
     }
     
-    // Calculate sleep time
-    if (last_event_time > 0 && timestamp > last_event_time) {
-        uint64_t sleep_duration = timestamp - last_event_time;
-        if (sleep_duration > 1000000) {
-            RecordedEvent sleep_event;
-            sleep_event.type = EventType::SLEEP;
-            sleep_event.timestamp = last_event_time;
-            sleep_event.data.sleep.duration_ns = sleep_duration;
-            event_queue.enqueue(sleep_event);
-        }
+    // Check if mouse recording is enabled
+    if (!io_config::recorder_enable_mouse) {
+        return;
     }
     
     RecordedEvent event;
@@ -321,9 +398,14 @@ void EventRecorder::record_mouse_button_event(uint16_t button, int16_t x, int16_
     }
 }
 
-void EventRecorder::record_mouse_move_event(int16_t x, int16_t y, uint64_t timestamp)
+void EventRecorder::record_mouse_move_event(int16_t x, int16_t y, int16_t dx, int16_t dy, uint64_t timestamp)
 {
     if (!is_recording.load(std::memory_order_acquire)) {
+        return;
+    }
+    
+    // Check if mouse recording is enabled
+    if (!io_config::recorder_enable_mouse) {
         return;
     }
     
@@ -333,6 +415,8 @@ void EventRecorder::record_mouse_move_event(int16_t x, int16_t y, uint64_t times
     event.data.mouse.button = 0;
     event.data.mouse.x = x;
     event.data.mouse.y = y;
+    event.data.mouse.dx = dx;
+    event.data.mouse.dy = dy;
     
     event_queue.enqueue(event);
     last_event_time = timestamp;
@@ -341,6 +425,11 @@ void EventRecorder::record_mouse_move_event(int16_t x, int16_t y, uint64_t times
 void EventRecorder::record_mouse_wheel_event(int16_t rotation, int16_t delta, uint64_t timestamp)
 {
     if (!is_recording.load(std::memory_order_acquire)) {
+        return;
+    }
+    
+    // Check if mouse recording is enabled
+    if (!io_config::recorder_enable_mouse) {
         return;
     }
     
@@ -360,6 +449,11 @@ void EventRecorder::record_gamepad_button_event(uint8_t gamepad_id, uint8_t butt
         return;
     }
     
+    // Check if gamepad recording is enabled
+    if (!io_config::recorder_enable_gamepad) {
+        return;
+    }
+    
     RecordedEvent event;
     event.type = pressed ? EventType::GAMEPAD_BUTTON_PRESS : EventType::GAMEPAD_BUTTON_RELEASE;
     event.timestamp = timestamp;
@@ -373,6 +467,11 @@ void EventRecorder::record_gamepad_button_event(uint8_t gamepad_id, uint8_t butt
 void EventRecorder::record_gamepad_axis_event(uint8_t gamepad_id, uint8_t axis, float value, uint64_t timestamp)
 {
     if (!is_recording.load(std::memory_order_acquire)) {
+        return;
+    }
+    
+    // Check if gamepad recording is enabled
+    if (!io_config::recorder_enable_gamepad) {
         return;
     }
     
@@ -393,7 +492,9 @@ void EventRecorder::record_uiohook_event(const uiohook_event* event)
         return;
     }
     
-    uint64_t timestamp = os_gettime_ns();
+    // Use the original event timestamp from uiohook (in milliseconds)
+    // Convert to nanoseconds for consistency with other timestamps
+    uint64_t timestamp = event->time * 1000000ULL;
     
     switch (event->type) {
         case EVENT_KEY_PRESSED:
@@ -410,7 +511,7 @@ void EventRecorder::record_uiohook_event(const uiohook_event* event)
             break;
         case EVENT_MOUSE_MOVED:
         case EVENT_MOUSE_DRAGGED:
-            record_mouse_move_event(event->data.mouse.x, event->data.mouse.y, timestamp);
+            record_mouse_move_event(event->data.mouse.x, event->data.mouse.y, 0, 0, timestamp);
             break;
         case EVENT_MOUSE_WHEEL:
             record_mouse_wheel_event(event->data.wheel.rotation, event->data.wheel.delta, timestamp);
@@ -426,16 +527,21 @@ void EventRecorder::record_sdl_gamepad_event(const SDL_Event* event, uint8_t gam
         return;
     }
     
-    uint64_t timestamp = os_gettime_ns();
+    // Use the original event timestamp from SDL (already in nanoseconds)
+    // This provides sub-millisecond precision for gamepad events
+    uint64_t timestamp = 0;
     
     switch (event->type) {
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            timestamp = event->gbutton.timestamp;
             record_gamepad_button_event(gamepad_id, event->gbutton.button, true, timestamp);
             break;
         case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            timestamp = event->gbutton.timestamp;
             record_gamepad_button_event(gamepad_id, event->gbutton.button, false, timestamp);
             break;
         case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            timestamp = event->gaxis.timestamp;
             record_gamepad_axis_event(gamepad_id, event->gaxis.axis, event->gaxis.value / 32767.0f, timestamp);
             break;
         default:

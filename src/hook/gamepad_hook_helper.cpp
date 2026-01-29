@@ -233,7 +233,10 @@ void gamepads::event_loop()
                 break;
             }
         }
-        SDL_Delay(5); // Wait a bit to not waste performance, 5ms is arbitrary though
+        // Use SDL_WaitEventTimeout instead of SDL_Delay for better responsiveness
+        // This blocks until an event arrives or 1ms timeout, reducing CPU usage
+        // while maintaining low latency for event processing
+        SDL_WaitEventTimeout(nullptr, 1);
     }
 }
 

@@ -75,6 +75,11 @@ io_settings_dialog::io_settings_dialog(QWidget *parent) : QDialog(parent, Qt::Di
     ui->cb_ds_enhanced->setChecked(io_config::ds_enhanced_mode);
     ui->cb_log->setChecked(io_config::log_flag);
     ui->txt_bind_address->setText(utf8_to_qt(io_config::wss_bind_address.c_str()));
+    
+    // Event recorder settings
+    ui->cb_recorder_keyboard->setChecked(io_config::recorder_enable_keyboard);
+    ui->cb_recorder_mouse->setChecked(io_config::recorder_enable_mouse);
+    ui->cb_recorder_gamepad->setChecked(io_config::recorder_enable_gamepad);
 
     ui->tab_remote->hide(); // TODO: Redo protocol and update client to sdl2
 
@@ -185,6 +190,12 @@ void io_settings_dialog::FormAccepted()
     io_config::wss_bind_address = qt_to_utf8(ui->txt_bind_address->text());
     io_config::wss_port = static_cast<uint16_t>(ui->sb_wss_port->value());
     io_config::ds_enhanced_mode = ui->cb_ds_enhanced->isChecked();
+    
+    // Event recorder settings
+    io_config::recorder_enable_keyboard = ui->cb_recorder_keyboard->isChecked();
+    io_config::recorder_enable_mouse = ui->cb_recorder_mouse->isChecked();
+    io_config::recorder_enable_gamepad = ui->cb_recorder_gamepad->isChecked();
+    
     io_config::save();
 }
 

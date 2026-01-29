@@ -37,6 +37,11 @@
 #define S_FILTER_MODE                   "filter_mode"
 #define S_LINEAR_ALPHA                  "linear_alpha"
 
+/* Event recorder settings */
+#define S_RECORDER_ENABLE_KEYBOARD      "recorder_enable_keyboard"
+#define S_RECORDER_ENABLE_MOUSE         "recorder_enable_mouse"
+#define S_RECORDER_ENABLE_GAMEPAD       "recorder_enable_gamepad"
+
 /* Misc values */
 #define S_INPUT_SOURCE                  "io.input_source"
 #define S_RELOAD_CONNECTIONS            "io.reload_connections"

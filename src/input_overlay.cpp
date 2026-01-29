@@ -21,6 +21,7 @@
 #include <QMainWindow>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
+#include <obs-output.h>
 #include <util/config-file.h>
 #include <thread>
 
@@ -54,27 +55,36 @@ static void frontend_event_callback(enum obs_frontend_event event, void *private
         case OBS_FRONTEND_EVENT_RECORDING_STARTED:
             binfo("Recording started - starting event recorder");
             if (recorder::g_recorder) {
-                // Get OBS recording path
-                const char* recording_path = obs_frontend_get_current_record_output_path();
                 std::string output_path;
                 
-                if (recording_path && recording_path[0] != '\0') {
-                    // Use the same directory and filename as the video, just change extension to .ior
-                    output_path = recording_path;
-                    binfo("[EventRecorder] OBS recording path: %s", recording_path);
-                    
-                    // Replace video extension with .ior (input overlay recording)
-                    size_t ext_pos = output_path.find_last_of('.');
-                    if (ext_pos != std::string::npos) {
-                        output_path = output_path.substr(0, ext_pos) + ".ior";
-                    } else {
-                        output_path += ".ior";
+                // Get the recording output object
+                obs_output_t* recording_output = obs_frontend_get_recording_output();
+                if (recording_output) {
+                    // Get the output settings which contains the file path
+                    obs_data_t* settings = obs_output_get_settings(recording_output);
+                    if (settings) {
+                        const char* file_path = obs_data_get_string(settings, "path");
+                        if (file_path && file_path[0] != '\0') {
+                            output_path = file_path;
+                            binfo("[EventRecorder] OBS recording file: %s", file_path);
+                            
+                            // Replace video extension with .ior (input overlay recording)
+                            size_t ext_pos = output_path.find_last_of('.');
+                            if (ext_pos != std::string::npos) {
+                                output_path = output_path.substr(0, ext_pos) + ".ior";
+                            } else {
+                                output_path += ".ior";
+                            }
+                            
+                            binfo("[EventRecorder] Event recording will be saved to: %s", output_path.c_str());
+                        }
+                        obs_data_release(settings);
                     }
-                    
-                    binfo("[EventRecorder] Event recording will be saved to: %s", output_path.c_str());
-                    bfree((void*)recording_path);
-                } else {
-                    // Fallback: generate timestamp-based filename in current directory
+                    obs_output_release(recording_output);
+                }
+                
+                // Fallback: if we couldn't get the path, use timestamp-based filename
+                if (output_path.empty()) {
                     auto now = std::chrono::system_clock::now();
                     auto time_t = std::chrono::system_clock::to_time_t(now);
                     char timestamp[64];
@@ -82,9 +92,6 @@ static void frontend_event_callback(enum obs_frontend_event event, void *private
                     output_path = std::string("input_recording_") + timestamp + ".ior";
                     
                     bwarn("[EventRecorder] Could not get OBS recording path, using fallback: %s", output_path.c_str());
-                    if (recording_path) {
-                        bfree((void*)recording_path);
-                    }
                 }
                 
                 recorder::start_recording(output_path);

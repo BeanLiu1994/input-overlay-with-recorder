@@ -54,6 +54,8 @@ struct RecordedEvent {
             uint16_t button;
             int16_t x;
             int16_t y;
+            int16_t dx;  // Raw delta X from Raw Input
+            int16_t dy;  // Raw delta Y from Raw Input
         } mouse;
         struct {
             int16_t rotation;
@@ -177,7 +179,7 @@ public:
     // Record events
     void record_keyboard_event(uint16_t keycode, bool pressed, uint64_t timestamp);
     void record_mouse_button_event(uint16_t button, int16_t x, int16_t y, bool pressed, uint64_t timestamp);
-    void record_mouse_move_event(int16_t x, int16_t y, uint64_t timestamp);
+    void record_mouse_move_event(int16_t x, int16_t y, int16_t dx, int16_t dy, uint64_t timestamp);
     void record_mouse_wheel_event(int16_t rotation, int16_t delta, uint64_t timestamp);
     void record_gamepad_button_event(uint8_t gamepad_id, uint8_t button, bool pressed, uint64_t timestamp);
     void record_gamepad_axis_event(uint8_t gamepad_id, uint8_t axis, float value, uint64_t timestamp);

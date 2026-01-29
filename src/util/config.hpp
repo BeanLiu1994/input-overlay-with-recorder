@@ -56,7 +56,13 @@ extern bool enable_overlay_source;
 extern bool enable_websocket_server;
 extern bool regex;
 extern int filter_mode;
-extern bool ds_enhanced_mode;	
+extern bool ds_enhanced_mode;
+
+/* Event recorder config */
+extern bool recorder_enable_keyboard;
+extern bool recorder_enable_mouse;
+extern bool recorder_enable_gamepad;
+
 /* Netowork config */
 extern bool log_flag;
 extern uint16_t server_refresh_rate;
