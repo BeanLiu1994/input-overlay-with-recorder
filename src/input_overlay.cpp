@@ -33,6 +33,7 @@
 #include "util/config.hpp"
 #include "util/log.h"
 #include "util/lang.h"
+#include "recorder/event_recorder.hpp"
 #include "plugin-macros.generated.h"
 
 #ifdef LINUX
@@ -44,11 +45,75 @@ extern void cleanupDisplay();
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("input-overlay", "en-US")
 
+// OBS frontend event callback for recording start/stop
+static void frontend_event_callback(enum obs_frontend_event event, void *private_data)
+{
+    UNUSED_PARAMETER(private_data);
+    
+    switch (event) {
+        case OBS_FRONTEND_EVENT_RECORDING_STARTED:
+            binfo("Recording started - starting event recorder");
+            if (recorder::g_recorder) {
+                // Get OBS recording path
+                const char* recording_path = obs_frontend_get_current_record_output_path();
+                std::string output_path;
+                
+                if (recording_path && recording_path[0] != '\0') {
+                    // Use the same directory and filename as the video, just change extension to .ior
+                    output_path = recording_path;
+                    binfo("[EventRecorder] OBS recording path: %s", recording_path);
+                    
+                    // Replace video extension with .ior (input overlay recording)
+                    size_t ext_pos = output_path.find_last_of('.');
+                    if (ext_pos != std::string::npos) {
+                        output_path = output_path.substr(0, ext_pos) + ".ior";
+                    } else {
+                        output_path += ".ior";
+                    }
+                    
+                    binfo("[EventRecorder] Event recording will be saved to: %s", output_path.c_str());
+                    bfree((void*)recording_path);
+                } else {
+                    // Fallback: generate timestamp-based filename in current directory
+                    auto now = std::chrono::system_clock::now();
+                    auto time_t = std::chrono::system_clock::to_time_t(now);
+                    char timestamp[64];
+                    std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", std::localtime(&time_t));
+                    output_path = std::string("input_recording_") + timestamp + ".ior";
+                    
+                    bwarn("[EventRecorder] Could not get OBS recording path, using fallback: %s", output_path.c_str());
+                    if (recording_path) {
+                        bfree((void*)recording_path);
+                    }
+                }
+                
+                recorder::start_recording(output_path);
+            }
+            break;
+            
+        case OBS_FRONTEND_EVENT_RECORDING_STOPPED:
+            binfo("Recording stopped - stopping event recorder");
+            if (recorder::g_recorder) {
+                recorder::stop_recording();
+            }
+            break;
+            
+        default:
+            break;
+    }
+}
+
 bool obs_module_load()
 {
     binfo("Loading v%s-%s (%s) build time %s", PLUGIN_VERSION, GIT_BRANCH, GIT_COMMIT_HASH, BUILD_TIME);
     io_config::set_defaults();
     io_config::load();
+
+    // Initialize event recorder
+    recorder::init();
+    
+    // Register OBS frontend event callback for recording start/stop
+    obs_frontend_add_event_callback(frontend_event_callback, nullptr);
 
     if (io_config::enable_overlay_source)
         sources::register_overlay_source();
@@ -84,6 +149,12 @@ bool obs_module_load()
 
 void obs_module_unload()
 {
+    // Remove OBS frontend event callback
+    obs_frontend_remove_event_callback(frontend_event_callback, nullptr);
+    
+    // Cleanup event recorder
+    recorder::cleanup();
+    
     gamepad_hook::stop();
     uiohook::stop();
     wss::stop();

@@ -6,6 +6,26 @@ Show keyboard, mouse and gamepad input on stream.\
 Available for OBS Studio on Windows and Linux (64bit).
 Head over to [releases](https://github.com/univrsal/input-overlay/releases) for binaries.
 
+## ✨ New Feature: Event Recorder
+
+**Automatically record all input events during OBS recording!**
+
+The Event Recorder captures keyboard, mouse, and gamepad inputs to a `.ior` file alongside your video recording. Perfect for:
+- 🎮 Replay analysis and speedrun verification
+- 📊 Input pattern analysis and statistics
+- 🤖 Automation and macro creation
+- 🎓 Tutorial creation and demonstration
+
+**Quick Start:**
+1. Start OBS recording → Event recording starts automatically
+2. Perform your actions (gaming, tutorial, etc.)
+3. Stop OBS recording → Events saved to `.ior` file
+
+📖 **Documentation:**
+- [Quick Start Guide](RECORDER_QUICK_START.md)
+- [Full Documentation](EVENT_RECORDER_DOCUMENTATION.md)
+- [Implementation Details](RECORDER_IMPLEMENTATION_SUMMARY.md)
+
 ## [Wiki](https://github.com/univrsal/input-overlay/wiki)
 ## [Installation](https://github.com/univrsal/input-overlay/wiki/Installation)
 ## Credits

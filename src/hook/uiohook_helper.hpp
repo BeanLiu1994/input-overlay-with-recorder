@@ -19,6 +19,7 @@
 #pragma once
 #include "../network/websocket_server.hpp"
 #include "../util/config.hpp"
+#include "../recorder/event_recorder.hpp"
 
 #include <input_data.hpp>
 #include <mutex>
@@ -68,6 +69,10 @@ inline void process_event(uiohook_event *event)
         last_scroll_time = os_gettime_ns();
     if (!io_config::io_window_filters.input_blocked())
         wss::dispatch_uiohook_event(event, "local");
+    
+    // Record event if recording is active
+    if (recorder::is_recording())
+        recorder::g_recorder->record_uiohook_event(event);
 }
 
 void start();

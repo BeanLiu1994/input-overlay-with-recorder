@@ -2,6 +2,7 @@
 #include "../util/log.h"
 #include "../util/config.hpp"
 #include "../network/websocket_server.hpp"
+#include "../recorder/event_recorder.hpp"
 #include <input_data.hpp>
 #include <thread>
 
@@ -172,6 +173,21 @@ void gamepads::event_loop()
         while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST) == 1) {
             if (!io_config::io_window_filters.input_blocked())
                 wss::dispatch_sdl_event(&event, "local", &local_data::data);
+            
+            // Record gamepad events if recording is active
+            if (recorder::is_recording()) {
+                // Find gamepad index for recording
+                uint8_t gamepad_idx = 0;
+                if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || event.type == SDL_EVENT_GAMEPAD_BUTTON_UP ||
+                    event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+                    auto pad = get_controller_from_instance_id(event.gdevice.which);
+                    if (pad) {
+                        gamepad_idx = static_cast<uint8_t>(event.gdevice.which);
+                    }
+                }
+                recorder::g_recorder->record_sdl_gamepad_event(&event, gamepad_idx);
+            }
+            
             switch (event.type) {
             case SDL_EVENT_GAMEPAD_ADDED:
                 char fmt[512];

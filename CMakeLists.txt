@@ -157,6 +157,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         src/hook/uiohook_helper.hpp
         src/hook/gamepad_hook_helper.hpp
         src/hook/gamepad_hook_helper.cpp
+        src/recorder/event_recorder.hpp
+        src/recorder/event_recorder.cpp
         src/gui/io_settings_dialog.cpp
         src/gui/io_settings_dialog.hpp
         src/util/obs_util.cpp
