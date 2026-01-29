@@ -24,10 +24,6 @@
 #include <chrono>
 #include <cstring>
 
-#ifdef _WIN32
-#include "windows_raw_input.hpp"
-#endif
-
 namespace recorder {
 
 std::unique_ptr<EventRecorder> g_recorder = nullptr;
@@ -37,8 +33,19 @@ EventRecorder::EventRecorder()
     , should_stop_writer(false)
     , recording_start_time(0)
     , last_event_time(0)
+    , sdl_init_time_offset(0)
 {
+    // Key states map will be initialized as empty
+    // Keys will be added to the map as they are pressed
+    
+    // Calculate SDL init time offset
+    // SDL timestamps are relative to SDL_Init(), we need to convert them to Unix epoch
+    uint64_t current_unix_time = os_gettime_ns();
+    uint64_t current_sdl_time = SDL_GetTicksNS();
+    sdl_init_time_offset = current_unix_time - current_sdl_time;
+    
     binfo("[EventRecorder] Constructor called");
+    binfo("[EventRecorder] SDL init time offset: %llu ns", (unsigned long long)sdl_init_time_offset);
 }
 
 EventRecorder::~EventRecorder()
@@ -60,12 +67,7 @@ void EventRecorder::start_recording(const std::string& output_path)
     binfo("[EventRecorder] ========================================");
     binfo("[EventRecorder] Starting event recording");
     binfo("[EventRecorder] Output file: %s", output_path.c_str());
-    
-#ifdef _WIN32
-    binfo("[EventRecorder] Using Windows Raw Input API for high-precision capture");
-#else
     binfo("[EventRecorder] Using uiohook for cross-platform capture");
-#endif
     
     // Clear the queue
     size_t old_queue_size = event_queue.size();
@@ -74,30 +76,21 @@ void EventRecorder::start_recording(const std::string& output_path)
         binfo("[EventRecorder] Cleared %zu old events from queue", old_queue_size);
     }
     
+    // Clear all key states (assume all keys are released at start)
+    {
+        std::lock_guard<std::mutex> lock(key_states_mutex);
+        key_states.clear();
+    }
+    
     output_file_path = output_path;
     recording_start_time = os_gettime_ns();
-    last_event_time = recording_start_time;
     
-    // Write START line with global timestamp to file
-    std::ofstream file(output_file_path, std::ios::trunc); // Create/truncate file
-    if (file.is_open()) {
-        // Convert recording_start_time (nanoseconds) to Unix timestamp (seconds.milliseconds)
-        uint64_t start_time_ms = recording_start_time / 1000000; // Convert ns to ms
-        uint64_t seconds = start_time_ms / 1000;
-        uint64_t milliseconds = start_time_ms % 1000;
-        
-        // Format: 0.000 START <unix_timestamp_seconds>.<milliseconds>
-        char start_line[128];
-        snprintf(start_line, sizeof(start_line), "0.000 START %llu.%03llu\n", 
-                 (unsigned long long)seconds, (unsigned long long)milliseconds);
-        
-        file.write(start_line, strlen(start_line));
-        file.close();
-        binfo("[EventRecorder] Wrote START line with Unix timestamp: %llu.%03llu", 
-              (unsigned long long)seconds, (unsigned long long)milliseconds);
-    } else {
-        berr("[EventRecorder] Failed to create output file: %s", output_path.c_str());
-    }
+    // Get Unix epoch time in milliseconds for the START line
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    recording_start_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    
+    last_event_time = recording_start_time;
     
     is_recording.store(true, std::memory_order_release);
     should_stop_writer.store(false, std::memory_order_release);
@@ -105,38 +98,6 @@ void EventRecorder::start_recording(const std::string& output_path)
     // Start writer thread
     writer_thread = std::thread(&EventRecorder::writer_thread_func, this);
     binfo("[EventRecorder] Writer thread started");
-    
-#ifdef _WIN32
-    // Initialize and start Windows Raw Input capture
-    raw_input::init();
-    
-    // Set up callbacks to forward events to recorder
-    raw_input::set_keyboard_callback([this](uint16_t vkey, uint16_t scancode, bool pressed, uint64_t timestamp_ns) {
-        // Convert Windows virtual key to uiohook keycode (approximate mapping)
-        // For now, use vkey directly - you may want to add proper mapping
-        this->record_keyboard_event(vkey, pressed, timestamp_ns);
-    });
-    
-    raw_input::set_mouse_button_callback([this](uint16_t button, int16_t x, int16_t y, bool pressed, uint64_t timestamp_ns) {
-        this->record_mouse_button_event(button, x, y, pressed, timestamp_ns);
-    });
-    
-    raw_input::set_mouse_move_callback([this](int16_t x, int16_t y, int16_t dx, int16_t dy, uint64_t timestamp_ns) {
-        this->record_mouse_move_event(x, y, dx, dy, timestamp_ns);
-    });
-    
-    raw_input::set_mouse_wheel_callback([this](int16_t delta, uint64_t timestamp_ns) {
-        // Convert delta to rotation (1 for up, -1 for down)
-        int16_t rotation = (delta > 0) ? 1 : -1;
-        this->record_mouse_wheel_event(rotation, delta, timestamp_ns);
-    });
-    
-    if (!raw_input::start_capture()) {
-        berr("[EventRecorder] Failed to start Windows Raw Input capture");
-    } else {
-        binfo("[EventRecorder] Windows Raw Input capture started successfully");
-    }
-#endif
     
     binfo("[EventRecorder] Recording is now ACTIVE");
     binfo("[EventRecorder] ========================================");
@@ -151,13 +112,6 @@ void EventRecorder::stop_recording()
 
     binfo("[EventRecorder] ========================================");
     binfo("[EventRecorder] Stopping event recording");
-    
-#ifdef _WIN32
-    // Stop Windows Raw Input capture first
-    binfo("[EventRecorder] Stopping Windows Raw Input capture");
-    raw_input::stop_capture();
-    raw_input::cleanup();
-#endif
     
     size_t remaining_events = event_queue.size();
     binfo("[EventRecorder] Queue has %zu events remaining to save", remaining_events);
@@ -183,6 +137,24 @@ void EventRecorder::stop_recording()
 void EventRecorder::writer_thread_func()
 {
     binfo("[EventRecorder] Writer thread started");
+    
+    // First, create the file and write the START line
+    std::ofstream file(output_file_path, std::ios::trunc); // Create/truncate file
+    if (file.is_open()) {
+        // Use the start time that was captured in start_recording()
+        // Format: 0 START <start_timestamp_ms>
+        // The first column is always 0 (relative time at start)
+        // The third column is the absolute Unix epoch timestamp when recording started (in milliseconds)
+        char start_line[128];
+        snprintf(start_line, sizeof(start_line), "0 START %llu\n", (unsigned long long)recording_start_time_ms);
+        
+        file.write(start_line, strlen(start_line));
+        file.close();
+        binfo("[EventRecorder] Wrote START line: 0 START %llu (Unix epoch ms)", (unsigned long long)recording_start_time_ms);
+    } else {
+        berr("[EventRecorder] Failed to create output file: %s", output_file_path.c_str());
+        // Continue anyway - save_to_file will try to create it
+    }
     
     std::vector<RecordedEvent> batch;
     batch.reserve(1000); // Pre-allocate for performance
@@ -262,15 +234,12 @@ bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
     for (const auto& event : events) {
         std::string line;
         
-        // Calculate relative timestamp in microseconds from recording start (for sub-millisecond precision)
-        uint64_t relative_time_us = (event.timestamp - recording_start_time) / 1000;
+        // Calculate relative timestamp in milliseconds from recording start
+        uint64_t relative_time_ms = (event.timestamp - recording_start_time) / 1000000ULL;
         
-        // Format: timestamp_us event_type event_data
-        // Output format: microseconds with 3 decimal places (e.g., "2366.123" = 2.366123 seconds)
-        uint64_t ms_part = relative_time_us / 1000;
-        uint64_t us_part = relative_time_us % 1000;
-        line = std::to_string(ms_part) + "." + 
-               (us_part < 100 ? (us_part < 10 ? "00" : "0") : "") + std::to_string(us_part) + " ";
+        // Format: timestamp_ms event_type event_data
+        // Output format: milliseconds as integer (e.g., "2366" = 2.366 seconds)
+        line = std::to_string(relative_time_ms) + " ";
         
         switch (event.type) {
             case EventType::KEYBOARD_PRESS:
@@ -344,6 +313,23 @@ void EventRecorder::record_keyboard_event(uint16_t keycode, bool pressed, uint64
     // Check if keyboard recording is enabled
     if (!io_config::recorder_enable_keyboard) {
         return;
+    }
+    
+    // Filter out auto-repeat events (duplicate KEY_DOWN without KEY_UP)
+    {
+        std::lock_guard<std::mutex> lock(key_states_mutex);
+        
+        // Check if key is already pressed
+        auto it = key_states.find(keycode);
+        bool was_pressed = (it != key_states.end() && it->second);
+        
+        if (pressed && was_pressed) {
+            // Key is already pressed - this is an auto-repeat event, ignore it
+            return;
+        }
+        
+        // Update key state
+        key_states[keycode] = pressed;
     }
     
     RecordedEvent event;
@@ -527,21 +513,21 @@ void EventRecorder::record_sdl_gamepad_event(const SDL_Event* event, uint8_t gam
         return;
     }
     
-    // Use the original event timestamp from SDL (already in nanoseconds)
-    // This provides sub-millisecond precision for gamepad events
+    // Convert SDL timestamp (relative to SDL_Init) to Unix epoch time
+    // SDL timestamps are in nanoseconds since SDL_Init(), we add the offset to get Unix epoch time
     uint64_t timestamp = 0;
     
     switch (event->type) {
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-            timestamp = event->gbutton.timestamp;
+            timestamp = event->gbutton.timestamp + sdl_init_time_offset;
             record_gamepad_button_event(gamepad_id, event->gbutton.button, true, timestamp);
             break;
         case SDL_EVENT_GAMEPAD_BUTTON_UP:
-            timestamp = event->gbutton.timestamp;
+            timestamp = event->gbutton.timestamp + sdl_init_time_offset;
             record_gamepad_button_event(gamepad_id, event->gbutton.button, false, timestamp);
             break;
         case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-            timestamp = event->gaxis.timestamp;
+            timestamp = event->gaxis.timestamp + sdl_init_time_offset;
             record_gamepad_axis_event(gamepad_id, event->gaxis.axis, event->gaxis.value / 32767.0f, timestamp);
             break;
         default:

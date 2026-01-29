@@ -90,9 +90,7 @@ PROPERTIES AUTOMOC ON
 if (MSVC)
     set(input-overlay_PLATFORM_SOURCES
             src/util/window_helper_win.cpp
-            src/hook/uiohook_helper_win.cpp
-            src/recorder/windows_raw_input.hpp
-            src/recorder/windows_raw_input.cpp)
+            src/hook/uiohook_helper_win.cpp)
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
         set(input-overlay_PLATFORM_DEPS
             ws2_32

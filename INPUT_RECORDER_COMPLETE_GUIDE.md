@@ -1,6 +1,6 @@
 # Input Recorder - Complete Guide
 
-> **Comprehensive documentation for the high-precision input recording system**
+> **Comprehensive documentation for the cross-platform input recording system**
 
 ---
 
@@ -9,29 +9,26 @@
 1. [Overview](#overview)
 2. [Quick Start](#quick-start)
 3. [File Format Specification](#file-format-specification)
-4. [High-Precision Recording](#high-precision-recording)
-5. [Windows Raw Input API](#windows-raw-input-api)
-6. [Timing Precision](#timing-precision)
-7. [Bug Fixes & Solutions](#bug-fixes--solutions)
-8. [Architecture & Design](#architecture--design)
-9. [Performance Characteristics](#performance-characteristics)
-10. [Usage Examples](#usage-examples)
-11. [Troubleshooting](#troubleshooting)
+4. [Timing Precision](#timing-precision)
+5. [Architecture & Design](#architecture--design)
+6. [Performance Characteristics](#performance-characteristics)
+7. [Usage Examples](#usage-examples)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Overview
 
-The **Event Recorder** is a high-precision input recording system for OBS Studio that automatically captures all keyboard, mouse, and gamepad events during recording sessions. It provides **microsecond-level precision** and uses a **lock-free queue architecture** for minimal overhead.
+The **Event Recorder** is a cross-platform input recording system for OBS Studio that automatically captures all keyboard, mouse, and gamepad events during recording sessions. It provides **millisecond-level precision** and uses a **lock-free queue architecture** for minimal overhead.
 
 ### Key Features
 
-✅ **Microsecond Precision** - 0.001ms timestamp resolution  
+✅ **Millisecond Precision** - 1ms timestamp resolution  
 ✅ **Lock-Free Architecture** - Zero blocking on input capture  
 ✅ **Automatic Recording** - Starts/stops with OBS recording  
 ✅ **Multi-threaded Design** - Asynchronous disk I/O  
 ✅ **Comprehensive Support** - Keyboard, mouse, and gamepad  
-✅ **Windows Raw Input** - Lowest latency on Windows (~1ms)  
+✅ **Cross-Platform** - Works on Windows, Linux, and macOS  
 ✅ **Human-Readable Format** - ASCII text `.ior` files  
 ✅ **Zero Configuration** - Works out of the box  
 
@@ -57,7 +54,7 @@ The **Event Recorder** is a high-precision input recording system for OBS Studio
    - Event recording stops automatically
    - All events are saved to `.ior` file
 
-> **⚠️ Note on Mouse Recording**: Mouse event recording is currently a **beta feature** and is **disabled by default**. It includes advanced features like raw input delta tracking (mickeys) on Windows. Enable it in settings if you need mouse movement and click recording.
+> **⚠️ Note on Mouse Recording**: Mouse event recording is currently a **beta feature** and is **disabled by default**. Enable it in settings if you need mouse movement and click recording.
 
 ### Output Location
 
@@ -79,17 +76,17 @@ timestamp_ms event_type event_data
 ### First Line (START Marker)
 
 ```
-0.000 START YYYY-MM-DD HH:MM:SS.mmm
+0 START <epoch_milliseconds>
 ```
 
-- Indicates recording start time with global timestamp
-- Always at relative time `0.000`
-- Format: ISO-8601 date/time with millisecond precision
-- Example: `0.000 START 2026-01-29 13:20:45.123`
+- Indicates recording start time with Unix epoch timestamp
+- Always at relative time `0`
+- Epoch time is in milliseconds (integer)
+- Example: `0 START 1738156708301`
 
 ### Event Format
 
-- **timestamp_ms**: Relative time in milliseconds with microsecond precision (e.g., `125.234`)
+- **timestamp_ms**: Relative time in milliseconds from recording start (integer)
 - **event_type**: Type of event (e.g., `KEY_DOWN`, `MOUSE_MOVE`)
 - **event_data**: Event-specific data (varies by type)
 
@@ -97,173 +94,65 @@ timestamp_ms event_type event_data
 
 > **⚠️ BETA FEATURE**: Mouse event recording is currently in beta and **disabled by default**. Enable it in input-overlay settings under "Event Recorder Settings" if you need mouse tracking.
 
-**MOUSE_MOVE** events now include **raw delta values** from the Windows Raw Input API:
+**MOUSE_MOVE** events include position and delta values:
 
 - **x, y**: Absolute screen coordinates (pixels)
-- **dx, dy**: Raw mouse movement delta from hardware (mickeys)
+- **dx, dy**: Mouse movement delta (pixels)
 
-#### What are "Mickeys"?
-
-A **mickey** is the smallest unit of mouse movement detected by the hardware:
-
-- **Definition**: 1 mickey = 1/400th of an inch of physical mouse movement
-- **Hardware-level**: Reported directly by the mouse sensor
-- **DPI-independent**: Same physical movement = same mickey count regardless of DPI
-- **Unaffected by software**: Windows sensitivity/acceleration doesn't change mickey values
-
-#### Delta Values Explained
-
-The `dx` and `dy` values represent:
-
-- **dx**: Horizontal movement in mickeys (negative = left, positive = right)
-- **dy**: Vertical movement in mickeys (negative = up, positive = down)
-- **Source**: `RAWMOUSE.lLastX` and `RAWMOUSE.lLastY` from Windows Raw Input API
-- **Precision**: 16-bit signed integer (-32768 to +32767)
-
-#### Example Interpretation
+#### Example
 
 ```
-125.456 MOUSE_MOVE 1920 1080 -10 5
+2366 MOUSE_MOVE 1920 1080 -10 5
 ```
 
 **What this means:**
-1. **Timestamp**: 125.456ms from recording start
+1. **Timestamp**: 2366ms (2.366 seconds) from recording start
 2. **Screen Position**: Mouse cursor is at (1920, 1080) pixels
-3. **Hardware Movement**: 
-   - Moved **left** by 10 mickeys
-   - Moved **down** by 5 mickeys
-4. **Physical Movement**: ~0.025 inches left, ~0.0125 inches down (at 400 DPI)
-
-#### Why Deltas Are Useful
-
-- ✅ **True hardware input** - Unaffected by Windows pointer acceleration
-- ✅ **Gaming analysis** - Measure actual mouse movement for aim training
-- ✅ **Input replay** - Reconstruct exact mouse movements
-- ✅ **Sensitivity calculation** - Determine effective DPI and sensitivity
-- ✅ **Smoothness metrics** - Detect jitter or inconsistent movement
-
-#### Use Cases
-
-**1. Gaming Analysis 🎮**
-
-```python
-# Calculate total mouse movement distance
-total_dx = sum(abs(event.dx) for event in mouse_moves)
-total_dy = sum(abs(event.dy) for event in mouse_moves)
-print(f"Total mouse movement: {total_dx} horizontal, {total_dy} vertical mickeys")
-
-# Determine effective sensitivity
-screen_pixels_moved = abs(x2 - x1)
-mickeys_moved = sum(abs(dx) for dx in deltas)
-sensitivity = screen_pixels_moved / mickeys_moved
-print(f"Effective sensitivity: {sensitivity:.2f} pixels/mickey")
-```
-
-**2. Input Replay 🔄**
-
-```python
-# Replay mouse movement using raw deltas
-for event in events:
-    if event.type == 'MOUSE_MOVE':
-        # Use dx, dy to reconstruct movement
-        simulate_mouse_delta(event.dx, event.dy)
-```
-
-**3. Smoothness Analysis 📊**
-
-```python
-# Calculate movement consistency
-deltas = [(event.dx, event.dy) for event in mouse_moves]
-variance = calculate_variance(deltas)
-print(f"Movement smoothness: {1/variance:.2f}")
-```
-
-**4. DPI Detection 🔍**
-
-```python
-# Estimate Mouse DPI
-physical_inches = total_mickeys / 400  # 400 mickeys per inch
-screen_pixels = abs(x_end - x_start)
-dpi = screen_pixels / physical_inches
-print(f"Estimated DPI: {dpi:.0f}")
-```
-
-#### Platform Support
-
-| Platform | Delta Support | Notes |
-|----------|---------------|-------|
-| **Windows** | ✅ Full | Via Raw Input API (`RAWMOUSE.lLastX/Y`) |
-| **Linux** | ❌ Not yet | uiohook doesn't provide deltas (outputs 0, 0) |
-| **macOS** | ❌ Not yet | uiohook doesn't provide deltas (outputs 0, 0) |
-
-**Note**: On non-Windows platforms, delta values will be `0 0` since uiohook only provides absolute coordinates.
+3. **Movement Delta**: 
+   - Moved **left** by 10 pixels
+   - Moved **down** by 5 pixels
 
 ### Event Types
 
 | Event Type | Format | Example | Description |
 |------------|--------|---------|-------------|
-| `START` | `0.000 START YYYY-MM-DD HH:MM:SS.mmm` | `0.000 START 2026-01-29 13:20:45.123` | Recording start marker |
-| `KEY_DOWN` | `timestamp KEY_DOWN keycode` | `125.234 KEY_DOWN 65` | Key pressed |
-| `KEY_UP` | `timestamp KEY_UP keycode` | `175.567 KEY_UP 65` | Key released |
-| `MOUSE_PRESS` | `timestamp MOUSE_PRESS button x y` | `200.123 MOUSE_PRESS 1 1920 1080` | Mouse button pressed |
-| `MOUSE_RELEASE` | `timestamp MOUSE_RELEASE button x y` | `250.456 MOUSE_RELEASE 1 1920 1080` | Mouse button released |
-| `MOUSE_MOVE` | `timestamp MOUSE_MOVE x y dx dy` | `300.789 MOUSE_MOVE 1850 1000 -5 3` | Mouse moved (with raw delta) |
-| `MOUSE_WHEEL` | `timestamp MOUSE_WHEEL rotation delta` | `350.012 MOUSE_WHEEL 1 120` | Scroll wheel |
-| `GAMEPAD_PRESS` | `timestamp GAMEPAD_PRESS gamepad_id button` | `400.345 GAMEPAD_PRESS 0 1` | Gamepad button pressed |
-| `GAMEPAD_RELEASE` | `timestamp GAMEPAD_RELEASE gamepad_id button` | `450.678 GAMEPAD_RELEASE 0 1` | Gamepad button released |
-| `GAMEPAD_AXIS` | `timestamp GAMEPAD_AXIS gamepad_id axis value` | `500.901 GAMEPAD_AXIS 0 0 0.75` | Gamepad axis motion |
+| `START` | `0 START <epoch_ms>` | `0 START 1738156708301` | Recording start marker |
+| `KEY_DOWN` | `timestamp KEY_DOWN keycode` | `2366 KEY_DOWN 65` | Key pressed |
+| `KEY_UP` | `timestamp KEY_UP keycode` | `2416 KEY_UP 65` | Key released |
+| `MOUSE_PRESS` | `timestamp MOUSE_PRESS button x y` | `3500 MOUSE_PRESS 1 1920 1080` | Mouse button pressed |
+| `MOUSE_RELEASE` | `timestamp MOUSE_RELEASE button x y` | `3550 MOUSE_RELEASE 1 1920 1080` | Mouse button released |
+| `MOUSE_MOVE` | `timestamp MOUSE_MOVE x y dx dy` | `5000 MOUSE_MOVE 1850 1000 -5 3` | Mouse moved |
+| `MOUSE_WHEEL` | `timestamp MOUSE_WHEEL rotation delta` | `5500 MOUSE_WHEEL 1 120` | Scroll wheel |
+| `GAMEPAD_PRESS` | `timestamp GAMEPAD_PRESS gamepad_id button` | `6000 GAMEPAD_PRESS 0 1` | Gamepad button pressed |
+| `GAMEPAD_RELEASE` | `timestamp GAMEPAD_RELEASE gamepad_id button` | `6050 GAMEPAD_RELEASE 0 1` | Gamepad button released |
+| `GAMEPAD_AXIS` | `timestamp GAMEPAD_AXIS gamepad_id axis value` | `6100 GAMEPAD_AXIS 0 0 0.75` | Gamepad axis motion |
 
 ### Example File
 
 ```
-0.000 START 2026-01-29 13:20:45.123
-0.000 KEY_DOWN 65
-50.123 KEY_UP 65
-125.456 MOUSE_MOVE 1920 1080 -10 5
-150.789 MOUSE_PRESS 1 1920 1080
-200.012 MOUSE_RELEASE 1 1920 1080
-500.345 GAMEPAD_PRESS 0 1
-550.678 GAMEPAD_RELEASE 0 1
-600.901 GAMEPAD_AXIS 0 0 0.75
+0 START 1738156708301
+2366 KEY_DOWN 65
+2416 KEY_UP 65
+3500 MOUSE_PRESS 1 1920 1080
+3550 MOUSE_RELEASE 1 1920 1080
+5000 MOUSE_MOVE 1920 1080 -10 5
+5500 MOUSE_WHEEL 1 120
+6000 GAMEPAD_PRESS 0 1
+6050 GAMEPAD_RELEASE 0 1
+6100 GAMEPAD_AXIS 0 0 0.75
 ```
 
-### Real-World Example with Delta Analysis
+### Platform Support
 
-```
-0.000 START 2026-01-29 15:16:37.000
-5.642 MOUSE_MOVE 5561 1569 -47 7
-13.566 MOUSE_MOVE 5514 1562 -53 -8
-21.946 MOUSE_MOVE 5461 1554 -82 -21
-37.324 MOUSE_MOVE 5343 1533 -63 -8
-45.346 MOUSE_MOVE 5280 1525 -60 -13
-53.318 MOUSE_MOVE 5220 1512 -63 -19
-61.453 MOUSE_MOVE 5157 1493 -63 -18
-69.569 MOUSE_MOVE 5094 1475 -61 -16
-77.957 MOUSE_MOVE 5033 1459 -58 -13
-```
-
-**Analysis:**
-```python
-# Calculate total movement
-total_horizontal = sum(abs(dx) for dx in deltas_x)  # 550 mickeys
-total_vertical = sum(abs(dy) for dy in deltas_y)    # 123 mickeys
-
-# Physical distance (at 400 DPI)
-horizontal_inches = 550 / 400  # 1.375 inches
-vertical_inches = 123 / 400    # 0.308 inches
-
-# Screen distance
-screen_pixels_x = abs(5033 - 5561)  # 528 pixels
-screen_pixels_y = abs(1459 - 1569)  # 110 pixels
-
-# Effective sensitivity
-sensitivity_x = 528 / 550  # 0.96 pixels/mickey
-sensitivity_y = 110 / 123  # 0.89 pixels/mickey
-```
+| Platform | Support | Input Library |
+|----------|---------|---------------|
+| **Windows** | ✅ Full | uiohook |
+| **Linux** | ✅ Full | uiohook |
+| **macOS** | ✅ Full | uiohook |
 
 ---
 
-## High-Precision Recording
+## Timing Precision
 
 ### Timestamp Precision
 
@@ -273,277 +162,43 @@ sensitivity_y = 110 / 123  # 0.89 pixels/mickey
 - **Source**: Direct OS timestamps from input drivers
 
 #### Output Format
-- **Format**: Decimal number with 3 decimal places
-- **Precision**: 1 microsecond (0.001ms)
-- **Example**: `2366.123` = 2.366123 seconds from recording start
+- **Format**: Integer (milliseconds)
+- **Precision**: 1 millisecond (1ms)
+- **Example**: `2366` = 2.366 seconds from recording start
 
-### Why Microseconds?
+### Why Milliseconds?
 
-- **Balance**: Sub-millisecond precision without excessive file size
-- **Human-readable**: Easy to read and parse (e.g., `125.456ms`)
-- **Sufficient**: Captures timing for even 1000 Hz gaming mice
-- **Professional-grade**: Suitable for gaming analysis and research
+- **Sufficient**: Captures timing for standard input devices (125-1000 Hz)
+- **Human-readable**: Easy to read and parse (e.g., `2366ms` = 2.366 seconds)
+- **Compact**: Smaller file size than floating-point timestamps
+- **Standard**: Industry-standard precision for input recording
 
 ### Precision by Input Type
 
 | Input Type | Hardware Frequency | Captured Precision | Example Interval |
 |------------|-------------------|-------------------|------------------|
-| **Keyboard** | ~1000 Hz (USB) | 1 µs | 15-30ms (typing) |
-| **Mouse Clicks** | ~1000 Hz (USB) | 1 µs | 50-200ms (clicking) |
-| **Mouse Movement** | 125-1000 Hz | 1 µs | 1-8ms (gaming mice) |
-| **Mouse Wheel** | ~125 Hz | 1 µs | 8-16ms (scrolling) |
-| **Gamepad Buttons** | ~125 Hz (USB) | 1 µs | 50-200ms (button press) |
-| **Gamepad Axes** | ~125 Hz (USB) | 1 µs | 8-16ms (analog stick) |
+| **Keyboard** | ~1000 Hz (USB) | 1 ms | 15-30ms (typing) |
+| **Mouse Clicks** | ~1000 Hz (USB) | 1 ms | 50-200ms (clicking) |
+| **Mouse Movement** | 125-1000 Hz | 1 ms | 1-8ms (gaming mice) |
+| **Mouse Wheel** | ~125 Hz | 1 ms | 8-16ms (scrolling) |
+| **Gamepad Buttons** | ~125 Hz (USB) | 1 ms | 50-200ms (button press) |
+| **Gamepad Axes** | ~125 Hz (USB) | 1 ms | 8-16ms (analog stick) |
 
 ### Interpreting Timestamps
 
 **Key Press Duration**:
 ```
-Press:   2366.000ms
-Release: 2366.123ms
-Duration: 0.123ms (123 microseconds)
+Press:   2366ms
+Release: 2416ms
+Duration: 50ms
 ```
 
 **Time Between Keys**:
 ```
-Key 1 Release: 2366.123ms
-Key 2 Press:   2382.456ms
-Interval: 16.333ms
+Key 1 Release: 2416ms
+Key 2 Press:   2450ms
+Interval: 34ms
 ```
-
----
-
-## Windows Raw Input API
-
-### Why Raw Input API?
-
-The **Windows Raw Input API** provides the **highest precision input capture** available on Windows without requiring special drivers or SDKs.
-
-#### Comparison with Other Technologies
-
-| Technology | Precision | Latency | Setup | Gaming Support |
-|------------|-----------|---------|-------|----------------|
-| **Raw Input API** | **Microsecond** | **0.5-1ms** | **None** | **1000 Hz** |
-| Low-Level Hooks | Millisecond | 1-2ms | None | 1000 Hz |
-| DirectInput | Millisecond | 2-5ms | Complex | Legacy |
-| NVIDIA Reflex | Nanosecond | <0.5ms | SDK + GPU | Requires RTX |
-| Windows Messages | 10-15ms | 10-20ms | None | 125 Hz |
-
-### Raw Input API Advantages
-
-✅ **Direct Hardware Access** - Bypasses Windows message queue  
-✅ **QueryPerformanceCounter** - Hardware-level timestamps (microsecond precision)  
-✅ **1000 Hz Support** - Full support for gaming mice/keyboards  
-✅ **No Dependencies** - Built into Windows (XP+)  
-✅ **Background Capture** - Works even when app is not in focus  
-✅ **Zero Configuration** - No drivers or SDKs needed  
-✅ **Lower Latency** - ~0.5-1ms vs 1-2ms for hooks  
-
-### Input Path Comparison
-
-#### Traditional Hook Path (uiohook)
-```
-Hardware → Kernel Driver → Windows Message Queue → Hook → Application
-         [~0.5ms]        [~0.5-1ms]              [~0.5ms]
-Total Latency: ~1.5-2ms
-```
-
-#### Raw Input Path
-```
-Hardware → Kernel Driver → WM_INPUT → Application
-         [~0.5ms]        [~0.5ms]
-Total Latency: ~1ms
-```
-
-**Latency Reduction**: ~50% faster than hooks!
-
-### QueryPerformanceCounter (QPC) Precision
-
-```cpp
-LARGE_INTEGER frequency, counter;
-QueryPerformanceFrequency(&frequency);  // Typically 10 MHz
-QueryPerformanceCounter(&counter);
-
-// Convert to nanoseconds
-uint64_t timestamp_ns = (counter * 1,000,000,000) / frequency;
-```
-
-**Precision**: 
-- Modern CPUs: **100 nanoseconds** (0.0001ms)
-- Typical: **1 microsecond** (0.001ms)
-- Guaranteed: **<10 microseconds** (0.01ms)
-
-### Polling Rate Support
-
-Raw Input API supports **all USB polling rates**:
-
-| Device Type | Polling Rate | Interval | Captured? |
-|-------------|-------------|----------|-----------|
-| Standard USB | 125 Hz | 8ms | ✅ Yes |
-| Gaming Keyboard | 1000 Hz | 1ms | ✅ Yes |
-| Gaming Mouse | 1000 Hz | 1ms | ✅ Yes |
-| High-End Mouse | 2000 Hz | 0.5ms | ✅ Yes |
-| Experimental | 8000 Hz | 0.125ms | ✅ Yes |
-
----
-
-## Timing Precision
-
-### Timestamp Source Evolution
-
-#### Before Fix ❌
-- Used `os_gettime_ns()` when recording events
-- Captured the time when the recorder **processed** the event
-- Resulted in artificial minimum intervals of ~7-9ms due to processing delays
-
-#### After Fix ✅
-- Uses original OS timestamps from input events
-- Captures the **actual input time** as reported by the operating system
-- Provides true sub-millisecond precision
-
-### Technical Details
-
-#### Keyboard & Mouse Events (uiohook)
-```cpp
-// OLD: Used current time (processing time)
-uint64_t timestamp = os_gettime_ns();
-
-// NEW: Uses original event time (actual input time)
-uint64_t timestamp = event->time * 1000000ULL;  // Convert ms to ns
-```
-
-#### Gamepad Events (SDL)
-```cpp
-// OLD: Used current time (processing time)
-uint64_t timestamp = os_gettime_ns();
-
-// NEW: Uses original event timestamp (already in nanoseconds)
-uint64_t timestamp = event->gbutton.timestamp;  // For button events
-uint64_t timestamp = event->gaxis.timestamp;    // For axis events
-```
-
-### Polling Optimization
-
-#### The 16ms Pattern Issue
-
-Previously, gamepad events showed a ~16ms interval pattern due to:
-1. **SDL_Delay(5)** - Artificial 5ms delay in polling loop
-2. **V-Sync alignment** - Windows batches events at display refresh (60Hz = 16.67ms)
-3. **OS scheduling** - Interaction between delay and event delivery
-
-#### Solution: Event-Driven Polling
-
-**Before:**
-```cpp
-while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST) == 1) {
-    // Process event
-}
-SDL_Delay(5); // Arbitrary delay, causes latency
-```
-
-**After:**
-```cpp
-while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_FIRST, SDL_EVENT_LAST) == 1) {
-    // Process event
-}
-SDL_WaitEventTimeout(nullptr, 1); // Wait for events, 1ms timeout
-```
-
-#### Benefits
-
-1. **Lower Latency** 🚀 - Events processed as soon as they arrive
-2. **Better CPU Efficiency** ⚡ - Event-driven instead of busy-waiting
-3. **Accurate Timestamps** ✅ - Still uses original OS timestamps
-
----
-
-## Bug Fixes & Solutions
-
-### Timestamp Overflow Bug (FIXED)
-
-#### Problem Description 🐛
-
-The recorded `.ior` files were showing **massive overflow timestamps**:
-
-```
-0.000 START 2026-01-29 14:58:48.301
-2413.207 KEY_DOWN 114                    ← Good
-18446738542129.502 KEY_DOWN 114          ← BAD! Overflow!
-2460.207 KEY_UP 114                      ← Good
-18446738547334.685 KEY_DOWN 18           ← BAD! Overflow!
-```
-
-#### Root Cause Analysis 🔍
-
-The bug occurred because we were mixing two different time bases:
-
-1. **recording_start_time** (Unix Epoch Time)
-   ```cpp
-   recording_start_time = os_gettime_ns();
-   // Returns: ~1,738,000,000,000,000,000 ns (time since Jan 1, 1970)
-   ```
-
-2. **Raw Input timestamps** (QueryPerformanceCounter)
-   ```cpp
-   QueryPerformanceCounter(&counter);
-   timestamp_ns = (counter * 1,000,000,000) / frequency;
-   // Returns: ~2,413,000,000,000 ns (time since system boot)
-   ```
-
-#### The Math That Broke
-
-```cpp
-// In save_to_file():
-uint64_t relative_time_us = (event.timestamp - recording_start_time) / 1000;
-
-// What actually happened:
-event.timestamp        = 2,413,000,000,000 ns      (QPC - small)
-recording_start_time   = 1,738,000,000,000,000,000 ns  (Unix - huge!)
-
-// Subtraction:
-2,413,000,000,000 - 1,738,000,000,000,000,000 = -1,737,997,587,000,000,000
-
-// uint64_t can't be negative, so it wraps around:
--1,737,997,587,000,000,000 → 18,446,746,076,122,551,616 (overflow!)
-```
-
-#### The Solution ✅
-
-Changed Raw Input to use the **same time base** as the rest of the system:
-
-```cpp
-uint64_t RawInputManager::get_timestamp_ns() const
-{
-    // Use os_gettime_ns() to ensure consistent time base
-    return os_gettime_ns();
-}
-```
-
-#### Testing Results
-
-**Before Fix:**
-```
-0.000 START 2026-01-29 14:58:48.301
-2413.207 KEY_DOWN 114
-18446738542129.502 KEY_DOWN 114          ← Overflow!
-```
-
-**After Fix:**
-```
-0.000 START 2026-01-29 15:10:00.000
-2413.207 KEY_DOWN 114                    ← Correct!
-2413.456 KEY_UP 114                      ← Correct!
-```
-
-### Key Lessons Learned
-
-⚠️ **Never Mix Time Sources!**
-
-When working with timestamps:
-1. **Choose ONE time base** for your entire system
-2. **Use consistent APIs** across all components
-3. **Test with actual data** - overflow bugs are easy to miss
-4. **Document time sources** - make it clear what each timestamp represents
 
 ---
 
@@ -570,8 +225,7 @@ When working with timestamps:
 ┌──────────────────┐           ┌──────────────────┐
 │  Input Listeners │           │  Lock-Free Queue │
 │                  │           │                  │
-│ - Raw Input (Win)│──────────▶│  Producer Side   │
-│ - uiohook        │           │                  │
+│ - uiohook        │──────────▶│  Producer Side   │
 │ - gamepad_hook   │           │                  │
 └──────────────────┘           └────────┬─────────┘
                                         │
@@ -601,7 +255,7 @@ When working with timestamps:
 
 1. **Input Event Occurs**
    - User presses a key, moves mouse, or uses gamepad
-   - Event captured by Raw Input (Windows) or uiohook/SDL
+   - Event captured by uiohook or SDL
 
 2. **Event Recording**
    - If recording is active, event is converted to `RecordedEvent`
@@ -632,10 +286,10 @@ When working with timestamps:
 
 | Stage | Time | Notes |
 |-------|------|-------|
-| Hardware to Kernel | ~0.5ms | USB polling interval |
-| Kernel to Application | ~0.3-0.5ms | Raw Input or hooks |
+| Hardware to Kernel | ~0.5-1ms | USB polling interval |
+| Kernel to Application | ~0.5-1ms | uiohook hooks |
 | Application to Queue | ~0.0001ms | Lock-free enqueue |
-| **Total Input Latency** | **~0.8-1ms** | **Excellent!** |
+| **Total Input Latency** | **~1-2ms** | **Excellent!** |
 | Queue to Disk | ~500ms | Batched (non-blocking) |
 
 ### CPU Overhead
@@ -666,8 +320,8 @@ When working with timestamps:
 
 - **Batch size**: Up to 1000 events per write
 - **Flush interval**: 500ms (configurable)
-- **File size**: ~30-50 bytes per event (ASCII text)
-- **Example**: 1 hour of gaming at 100 events/sec = ~10-18 MB
+- **File size**: ~20-30 bytes per event (ASCII text)
+- **Example**: 1 hour of gaming at 100 events/sec = ~7-11 MB
 
 ---
 
@@ -682,28 +336,27 @@ When working with timestamps:
 
 std::ifstream file("recording.ior");
 std::string line;
-std::string recording_start_time;
+uint64_t recording_start_epoch_ms = 0;
 
 while (std::getline(file, line)) {
     std::istringstream iss(line);
-    double timestamp_ms;
+    uint64_t timestamp_ms;
     std::string event_type;
     
     iss >> timestamp_ms >> event_type;
     
     if (event_type == "START") {
-        std::string date, time;
-        iss >> date >> time;
-        recording_start_time = date + " " + time;
-        printf("Recording started at: %s\n", recording_start_time.c_str());
+        iss >> recording_start_epoch_ms;
+        printf("Recording started at epoch: %llu ms\n", recording_start_epoch_ms);
     } else if (event_type == "KEY_DOWN") {
         uint16_t keycode;
         iss >> keycode;
-        printf("Key pressed: %d at %.3f ms\n", keycode, timestamp_ms);
+        printf("Key pressed: %d at %llu ms\n", keycode, timestamp_ms);
     } else if (event_type == "MOUSE_MOVE") {
         int16_t x, y, dx, dy;
         iss >> x >> y >> dx >> dy;
-        printf("Mouse moved to (%d, %d) delta (%d, %d) at %.3f ms\n", x, y, dx, dy, timestamp_ms);
+        printf("Mouse moved to (%d, %d) delta (%d, %d) at %llu ms\n", 
+               x, y, dx, dy, timestamp_ms);
     }
 }
 ```
@@ -712,16 +365,16 @@ while (std::getline(file, line)) {
 
 ```python
 with open('recording.ior', 'r') as f:
-    recording_start_time = None
+    recording_start_epoch_ms = None
     
     for line in f:
         parts = line.strip().split()
-        timestamp_ms = float(parts[0])
+        timestamp_ms = int(parts[0])
         event_type = parts[1]
         
         if event_type == 'START':
-            recording_start_time = ' '.join(parts[2:])
-            print(f"Recording started at: {recording_start_time}")
+            recording_start_epoch_ms = int(parts[2])
+            print(f"Recording started at epoch: {recording_start_epoch_ms}ms")
         elif event_type == 'KEY_DOWN':
             keycode = int(parts[2])
             print(f"Key pressed: {keycode} at {timestamp_ms}ms")
@@ -739,13 +392,39 @@ with open('recording.ior', 'r') as f:
     for line in f:
         if 'START' in line:
             continue
-        timestamp = float(line.split()[0])
+        timestamp = int(line.split()[0])
         events.append(timestamp)
 
 # Calculate intervals
 intervals = [events[i+1] - events[i] for i in range(len(events)-1)]
 avg_interval = sum(intervals) / len(intervals)
-print(f"Average interval: {avg_interval:.3f}ms")
+print(f"Average interval: {avg_interval:.1f}ms")
+```
+
+### Converting to Absolute Time (Python)
+
+```python
+from datetime import datetime, timedelta
+
+with open('recording.ior', 'r') as f:
+    first_line = f.readline()
+    parts = first_line.strip().split()
+    
+    # Get epoch milliseconds from START line
+    epoch_ms = int(parts[2])
+    start_time = datetime.fromtimestamp(epoch_ms / 1000.0)
+    
+    print(f"Recording started at: {start_time}")
+    
+    # Process events
+    for line in f:
+        parts = line.strip().split()
+        relative_ms = int(parts[0])
+        event_type = parts[1]
+        
+        # Calculate absolute time
+        absolute_time = start_time + timedelta(milliseconds=relative_ms)
+        print(f"{absolute_time}: {event_type}")
 ```
 
 ---
@@ -761,8 +440,8 @@ print(f"Average interval: {avg_interval:.3f}ms")
 
 **Q: File size is very large**
 - Mouse movement events can be frequent
-- Consider filtering mouse movement in future versions
-- Compression will help in future updates
+- Consider disabling mouse recording if not needed
+- File size is typically 7-11 MB per hour at 100 events/sec
 
 **Q: Events seem delayed or missing**
 - Check if input filtering is enabled in plugin settings
@@ -770,90 +449,23 @@ print(f"Average interval: {avg_interval:.3f}ms")
 - Check system performance (CPU/disk)
 
 **Q: Timestamps look wrong**
-- Ensure you're using the latest version (overflow bug fixed)
-- Check that all components use consistent time source
 - Verify OS time is set correctly
+- Check that recording started properly (START line exists)
+- Ensure you're reading timestamps as integers, not floats
 
-### Platform Support
+### Platform-Specific Notes
 
-- ✅ **Windows** - Full support with Raw Input API
-- ✅ **Linux** - Supported via uiohook
-- ✅ **macOS** - Supported via uiohook
+**Windows**:
+- Uses uiohook for cross-platform consistency
+- Millisecond precision from OS
 
----
+**Linux**:
+- Requires X11 or Wayland
+- May need permissions for input device access
 
-## Raw Input Delta Implementation Details
-
-### Code Changes
-
-#### 1. Callback Signature
-
-**windows_raw_input.hpp:**
-```cpp
-// Old
-using MouseMoveCallback = std::function<void(int16_t x, int16_t y, uint64_t timestamp_ns)>;
-
-// New
-using MouseMoveCallback = std::function<void(int16_t x, int16_t y, int16_t dx, int16_t dy, uint64_t timestamp_ns)>;
-```
-
-#### 2. Raw Input Processing
-
-**windows_raw_input.cpp:**
-```cpp
-// Capture raw delta values
-int16_t dx = static_cast<int16_t>(mouse.lLastX);
-int16_t dy = static_cast<int16_t>(mouse.lLastY);
-
-// Pass to callback
-if (mouse_move_cb) {
-    mouse_move_cb(cursor_pos.x, cursor_pos.y, dx, dy, timestamp_ns);
-}
-```
-
-#### 3. Event Structure
-
-**event_recorder.hpp:**
-```cpp
-struct {
-    uint16_t button;
-    int16_t x;
-    int16_t y;
-    int16_t dx;  // Raw delta X from Raw Input
-    int16_t dy;  // Raw delta Y from Raw Input
-} mouse;
-```
-
-#### 4. File Output
-
-**event_recorder.cpp:**
-```cpp
-case EventType::MOUSE_MOVE:
-    line += "MOUSE_MOVE " + std::to_string(event.data.mouse.x) + " " + 
-            std::to_string(event.data.mouse.y) + " " +
-            std::to_string(event.data.mouse.dx) + " " +
-            std::to_string(event.data.mouse.dy);
-    break;
-```
-
-### Backward Compatibility
-
-⚠️ **Breaking Change**: Old parsers expecting only `x y` will need to be updated to handle `x y dx dy`.
-
-**Migration:**
-```python
-# Old parser
-parts = line.split()
-x, y = int(parts[2]), int(parts[3])
-
-# New parser
-parts = line.split()
-if len(parts) >= 6:  # New format with deltas
-    x, y, dx, dy = int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
-else:  # Old format (backward compatibility)
-    x, y = int(parts[2]), int(parts[3])
-    dx, dy = 0, 0  # No delta information
-```
+**macOS**:
+- May require accessibility permissions
+- Check System Preferences → Security & Privacy → Accessibility
 
 ---
 
@@ -868,10 +480,8 @@ else:  # Old format (backward compatibility)
 5. **Metadata** - Add recording metadata header (resolution, game name, etc.)
 6. **Synchronization** - Embed video frame numbers for perfect sync
 7. **Binary Format** - Optional compact binary format for large recordings
-8. **Linux/macOS Delta Support** - Implement X11/Wayland/IOKit raw input capture
-9. **Acceleration Detection** - Compare deltas to screen movement
-10. **DPI Auto-detection** - Calculate mouse DPI from movement data
-11. **Movement Visualization** - Generate heatmaps from delta data
+8. **Movement Visualization** - Generate heatmaps from movement data
+9. **Statistics** - Built-in analysis tools (APM, click rate, etc.)
 
 ---
 
@@ -879,9 +489,9 @@ else:  # Old format (backward compatibility)
 
 The **Input Recorder** provides:
 
-✅ **Microsecond precision** (0.001ms) for all input events  
+✅ **Millisecond precision** (1ms) for all input events  
 ✅ **Lock-free architecture** - Zero blocking on input capture  
-✅ **Windows Raw Input** - Lowest latency on Windows (~1ms)  
+✅ **Cross-platform support** - Windows, Linux, macOS  
 ✅ **Automatic recording** - Starts/stops with OBS  
 ✅ **Human-readable format** - Easy to parse and analyze  
 ✅ **Comprehensive support** - Keyboard, mouse, gamepad  
@@ -891,10 +501,10 @@ The **Input Recorder** provides:
 **Perfect for**:
 - Gaming input analysis
 - Speedrun recording
-- Input latency measurement
-- Accessibility research
-- Performance testing
 - Tutorial demonstrations
+- Performance testing
+- Accessibility research
+- Input pattern analysis
 
 ---
 
@@ -907,10 +517,10 @@ Same as input-overlay: GNU General Public License v2.0
 - Based on input-overlay by univrsal
 - Lock-free queue implementation inspired by Michael-Scott queue
 - Event recording feature added for input-recorder project integration
-- Windows Raw Input implementation for high-precision capture
+- Cross-platform support via uiohook
 
 ---
 
 **Last Updated**: 2026-01-29  
-**Version**: 1.0  
+**Version**: 2.0  
 **Status**: ✅ Production Ready

@@ -71,12 +71,8 @@ inline void process_event(uiohook_event *event)
         wss::dispatch_uiohook_event(event, "local");
     
     // Record event if recording is active
-    // NOTE: Disabled uiohook recording on Windows - using Raw Input instead for higher precision
-    // uiohook continues to run for overlay display, but events are not recorded
-#ifndef _WIN32
     if (recorder::is_recording())
         recorder::g_recorder->record_uiohook_event(event);
-#endif
 }
 
 void start();

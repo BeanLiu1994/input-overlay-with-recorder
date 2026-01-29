@@ -23,6 +23,8 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <mutex>
 #include <uiohook.h>
 #include <SDL3/SDL.h>
 
@@ -54,8 +56,8 @@ struct RecordedEvent {
             uint16_t button;
             int16_t x;
             int16_t y;
-            int16_t dx;  // Raw delta X from Raw Input
-            int16_t dy;  // Raw delta Y from Raw Input
+            int16_t dx;  // Mouse movement delta X
+            int16_t dy;  // Mouse movement delta Y
         } mouse;
         struct {
             int16_t rotation;
@@ -154,8 +156,18 @@ private:
     std::atomic<bool> should_stop_writer;
     std::thread writer_thread;
     std::string output_file_path;
-    uint64_t recording_start_time;
+    uint64_t recording_start_time; // Unix epoch time in nanoseconds
+    uint64_t recording_start_time_ms; // Unix epoch time in milliseconds (for START line)
     uint64_t last_event_time;
+    
+    // SDL initialization time offset (Unix epoch time when SDL_Init was called)
+    // Used to convert SDL timestamps (relative to SDL_Init) to Unix epoch time
+    uint64_t sdl_init_time_offset;
+    
+    // Key state tracking to filter out auto-repeat events
+    // Using unordered_map to support all possible keycodes (including large uiohook keycodes)
+    std::unordered_map<uint16_t, bool> key_states;
+    std::mutex key_states_mutex;
 
     // Writer thread function
     void writer_thread_func();
