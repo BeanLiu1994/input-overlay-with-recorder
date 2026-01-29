@@ -42,13 +42,22 @@ The **Event Recorder** is a high-precision input recording system for OBS Studio
 ### For Users
 
 1. **Install** the updated input-overlay plugin
-2. **Start Recording** in OBS
+2. **Configure Event Recorder** (optional)
+   - Open input-overlay settings in OBS
+   - Go to "Local features" tab
+   - Enable/disable event types:
+     - ✅ Keyboard events (enabled by default)
+     - ⚠️ **Mouse events (BETA - disabled by default)**
+     - ✅ Gamepad events (enabled by default)
+3. **Start Recording** in OBS
    - Event recording starts automatically
    - `.ior` file is created alongside video file
-3. **Perform Actions** (gaming, tutorial, etc.)
-4. **Stop Recording** in OBS
+4. **Perform Actions** (gaming, tutorial, etc.)
+5. **Stop Recording** in OBS
    - Event recording stops automatically
    - All events are saved to `.ior` file
+
+> **⚠️ Note on Mouse Recording**: Mouse event recording is currently a **beta feature** and is **disabled by default**. It includes advanced features like raw input delta tracking (mickeys) on Windows. Enable it in settings if you need mouse movement and click recording.
 
 ### Output Location
 
@@ -86,31 +95,108 @@ timestamp_ms event_type event_data
 
 ### Mouse Movement Delta Information
 
+> **⚠️ BETA FEATURE**: Mouse event recording is currently in beta and **disabled by default**. Enable it in input-overlay settings under "Event Recorder Settings" if you need mouse tracking.
+
 **MOUSE_MOVE** events now include **raw delta values** from the Windows Raw Input API:
 
 - **x, y**: Absolute screen coordinates (pixels)
 - **dx, dy**: Raw mouse movement delta from hardware (mickeys)
 
-**What are "mickeys"?**
-- A "mickey" is the smallest unit of mouse movement detected by the hardware
-- Typically 1 mickey = 1/400th of an inch of physical mouse movement
-- High-DPI mice can report fractional mickeys for sub-pixel precision
-- Delta values are **independent of mouse sensitivity/acceleration settings**
+#### What are "Mickeys"?
 
-**Why deltas are useful:**
+A **mickey** is the smallest unit of mouse movement detected by the hardware:
+
+- **Definition**: 1 mickey = 1/400th of an inch of physical mouse movement
+- **Hardware-level**: Reported directly by the mouse sensor
+- **DPI-independent**: Same physical movement = same mickey count regardless of DPI
+- **Unaffected by software**: Windows sensitivity/acceleration doesn't change mickey values
+
+#### Delta Values Explained
+
+The `dx` and `dy` values represent:
+
+- **dx**: Horizontal movement in mickeys (negative = left, positive = right)
+- **dy**: Vertical movement in mickeys (negative = up, positive = down)
+- **Source**: `RAWMOUSE.lLastX` and `RAWMOUSE.lLastY` from Windows Raw Input API
+- **Precision**: 16-bit signed integer (-32768 to +32767)
+
+#### Example Interpretation
+
+```
+125.456 MOUSE_MOVE 1920 1080 -10 5
+```
+
+**What this means:**
+1. **Timestamp**: 125.456ms from recording start
+2. **Screen Position**: Mouse cursor is at (1920, 1080) pixels
+3. **Hardware Movement**: 
+   - Moved **left** by 10 mickeys
+   - Moved **down** by 5 mickeys
+4. **Physical Movement**: ~0.025 inches left, ~0.0125 inches down (at 400 DPI)
+
+#### Why Deltas Are Useful
+
 - ✅ **True hardware input** - Unaffected by Windows pointer acceleration
 - ✅ **Gaming analysis** - Measure actual mouse movement for aim training
 - ✅ **Input replay** - Reconstruct exact mouse movements
 - ✅ **Sensitivity calculation** - Determine effective DPI and sensitivity
 - ✅ **Smoothness metrics** - Detect jitter or inconsistent movement
 
-**Example:**
+#### Use Cases
+
+**1. Gaming Analysis 🎮**
+
+```python
+# Calculate total mouse movement distance
+total_dx = sum(abs(event.dx) for event in mouse_moves)
+total_dy = sum(abs(event.dy) for event in mouse_moves)
+print(f"Total mouse movement: {total_dx} horizontal, {total_dy} vertical mickeys")
+
+# Determine effective sensitivity
+screen_pixels_moved = abs(x2 - x1)
+mickeys_moved = sum(abs(dx) for dx in deltas)
+sensitivity = screen_pixels_moved / mickeys_moved
+print(f"Effective sensitivity: {sensitivity:.2f} pixels/mickey")
 ```
-125.456 MOUSE_MOVE 1920 1080 -10 5
+
+**2. Input Replay 🔄**
+
+```python
+# Replay mouse movement using raw deltas
+for event in events:
+    if event.type == 'MOUSE_MOVE':
+        # Use dx, dy to reconstruct movement
+        simulate_mouse_delta(event.dx, event.dy)
 ```
-- Mouse is at screen position (1920, 1080)
-- Mouse moved left by 10 mickeys and down by 5 mickeys
-- Actual screen movement depends on DPI and sensitivity settings
+
+**3. Smoothness Analysis 📊**
+
+```python
+# Calculate movement consistency
+deltas = [(event.dx, event.dy) for event in mouse_moves]
+variance = calculate_variance(deltas)
+print(f"Movement smoothness: {1/variance:.2f}")
+```
+
+**4. DPI Detection 🔍**
+
+```python
+# Estimate Mouse DPI
+physical_inches = total_mickeys / 400  # 400 mickeys per inch
+screen_pixels = abs(x_end - x_start)
+dpi = screen_pixels / physical_inches
+print(f"Estimated DPI: {dpi:.0f}")
+```
+
+#### Platform Support
+
+| Platform | Delta Support | Notes |
+|----------|---------------|-------|
+| **Windows** | ✅ Full | Via Raw Input API (`RAWMOUSE.lLastX/Y`) |
+| **Linux** | ❌ Not yet | uiohook doesn't provide deltas (outputs 0, 0) |
+| **macOS** | ❌ Not yet | uiohook doesn't provide deltas (outputs 0, 0) |
+
+**Note**: On non-Windows platforms, delta values will be `0 0` since uiohook only provides absolute coordinates.
 
 ### Event Types
 
@@ -139,6 +225,40 @@ timestamp_ms event_type event_data
 500.345 GAMEPAD_PRESS 0 1
 550.678 GAMEPAD_RELEASE 0 1
 600.901 GAMEPAD_AXIS 0 0 0.75
+```
+
+### Real-World Example with Delta Analysis
+
+```
+0.000 START 2026-01-29 15:16:37.000
+5.642 MOUSE_MOVE 5561 1569 -47 7
+13.566 MOUSE_MOVE 5514 1562 -53 -8
+21.946 MOUSE_MOVE 5461 1554 -82 -21
+37.324 MOUSE_MOVE 5343 1533 -63 -8
+45.346 MOUSE_MOVE 5280 1525 -60 -13
+53.318 MOUSE_MOVE 5220 1512 -63 -19
+61.453 MOUSE_MOVE 5157 1493 -63 -18
+69.569 MOUSE_MOVE 5094 1475 -61 -16
+77.957 MOUSE_MOVE 5033 1459 -58 -13
+```
+
+**Analysis:**
+```python
+# Calculate total movement
+total_horizontal = sum(abs(dx) for dx in deltas_x)  # 550 mickeys
+total_vertical = sum(abs(dy) for dy in deltas_y)    # 123 mickeys
+
+# Physical distance (at 400 DPI)
+horizontal_inches = 550 / 400  # 1.375 inches
+vertical_inches = 123 / 400    # 0.308 inches
+
+# Screen distance
+screen_pixels_x = abs(5033 - 5561)  # 528 pixels
+screen_pixels_y = abs(1459 - 1569)  # 110 pixels
+
+# Effective sensitivity
+sensitivity_x = 528 / 550  # 0.96 pixels/mickey
+sensitivity_y = 110 / 123  # 0.89 pixels/mickey
 ```
 
 ---
@@ -662,6 +782,81 @@ print(f"Average interval: {avg_interval:.3f}ms")
 
 ---
 
+## Raw Input Delta Implementation Details
+
+### Code Changes
+
+#### 1. Callback Signature
+
+**windows_raw_input.hpp:**
+```cpp
+// Old
+using MouseMoveCallback = std::function<void(int16_t x, int16_t y, uint64_t timestamp_ns)>;
+
+// New
+using MouseMoveCallback = std::function<void(int16_t x, int16_t y, int16_t dx, int16_t dy, uint64_t timestamp_ns)>;
+```
+
+#### 2. Raw Input Processing
+
+**windows_raw_input.cpp:**
+```cpp
+// Capture raw delta values
+int16_t dx = static_cast<int16_t>(mouse.lLastX);
+int16_t dy = static_cast<int16_t>(mouse.lLastY);
+
+// Pass to callback
+if (mouse_move_cb) {
+    mouse_move_cb(cursor_pos.x, cursor_pos.y, dx, dy, timestamp_ns);
+}
+```
+
+#### 3. Event Structure
+
+**event_recorder.hpp:**
+```cpp
+struct {
+    uint16_t button;
+    int16_t x;
+    int16_t y;
+    int16_t dx;  // Raw delta X from Raw Input
+    int16_t dy;  // Raw delta Y from Raw Input
+} mouse;
+```
+
+#### 4. File Output
+
+**event_recorder.cpp:**
+```cpp
+case EventType::MOUSE_MOVE:
+    line += "MOUSE_MOVE " + std::to_string(event.data.mouse.x) + " " + 
+            std::to_string(event.data.mouse.y) + " " +
+            std::to_string(event.data.mouse.dx) + " " +
+            std::to_string(event.data.mouse.dy);
+    break;
+```
+
+### Backward Compatibility
+
+⚠️ **Breaking Change**: Old parsers expecting only `x y` will need to be updated to handle `x y dx dy`.
+
+**Migration:**
+```python
+# Old parser
+parts = line.split()
+x, y = int(parts[2]), int(parts[3])
+
+# New parser
+parts = line.split()
+if len(parts) >= 6:  # New format with deltas
+    x, y, dx, dy = int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
+else:  # Old format (backward compatibility)
+    x, y = int(parts[2]), int(parts[3])
+    dx, dy = 0, 0  # No delta information
+```
+
+---
+
 ## Future Enhancements
 
 ### Potential Features
@@ -673,6 +868,10 @@ print(f"Average interval: {avg_interval:.3f}ms")
 5. **Metadata** - Add recording metadata header (resolution, game name, etc.)
 6. **Synchronization** - Embed video frame numbers for perfect sync
 7. **Binary Format** - Optional compact binary format for large recordings
+8. **Linux/macOS Delta Support** - Implement X11/Wayland/IOKit raw input capture
+9. **Acceleration Detection** - Compare deltas to screen movement
+10. **DPI Auto-detection** - Calculate mouse DPI from movement data
+11. **Movement Visualization** - Generate heatmaps from delta data
 
 ---
 

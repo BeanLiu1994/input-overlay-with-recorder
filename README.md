@@ -17,9 +17,10 @@ The Event Recorder captures keyboard, mouse, and gamepad inputs to a `.ior` file
 - 🎓 Tutorial creation and demonstration
 
 **Quick Start:**
-1. Start OBS recording → Event recording starts automatically
-2. Perform your actions (gaming, tutorial, etc.)
-3. Stop OBS recording → Events saved to `.ior` file
+1. Configure in input-overlay settings (mouse recording is **BETA** - disabled by default)
+2. Start OBS recording → Event recording starts automatically
+3. Perform your actions (gaming, tutorial, etc.)
+4. Stop OBS recording → Events saved to `.ior` file
 
 📖 **Documentation:**
 - [Quick Start Guide](RECORDER_QUICK_START.md)
