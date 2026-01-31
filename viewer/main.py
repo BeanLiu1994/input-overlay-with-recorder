@@ -15,28 +15,15 @@ Features:
 import sys
 from pathlib import Path
 
-# Use the venv Python
-venv_python = Path(__file__).parent / "venv" / "bin" / "python3"
-venv_site_packages = Path(__file__).parent / "venv" / "lib" / f"python3.{sys.version_info.minor}" / "site-packages"
-sys.path.insert(0, str(venv_site_packages))
-
-try:
-    from PyQt6.QtWidgets import (
-        QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QSplitter, QLabel, QPushButton, QSlider, QTableWidget, QTableWidgetItem,
-        QFileDialog, QGroupBox, QHeaderView, QComboBox
-    )
-    from PyQt6.QtCore import Qt, QUrl
-    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-    from PyQt6.QtMultimediaWidgets import QVideoWidget
-    from PyQt6.QtGui import QAction, QKeySequence, QShortcut
-except ImportError as e:
-    print(f"Error importing PyQt6: {e}")
-    print("Please install required packages by running:")
-    print(f"  {venv_python} -m pip install -r requirements.txt")
-    print("\nOr manually:")
-    print(f"  {venv_python} -m pip install PyQt6 PyQt6-Multimedia")
-    sys.exit(1)
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QSplitter, QLabel, QPushButton, QSlider, QTableWidget, QTableWidgetItem,
+    QFileDialog, QGroupBox, QHeaderView, QComboBox
+)
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 
 
 class IORParser:
