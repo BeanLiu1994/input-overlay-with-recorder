@@ -18,7 +18,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QLabel, QPushButton, QSlider, QTableWidget, QTableWidgetItem,
-    QFileDialog, QGroupBox, QHeaderView, QComboBox
+    QFileDialog, QGroupBox, QHeaderView, QComboBox, QMenu
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -238,16 +238,17 @@ class KeyStateWidget(QWidget):
 
 class EventStreamWidget(QWidget):
     """Widget to display event stream"""
-    
-    def __init__(self):
+
+    def __init__(self, parent_window=None):
         super().__init__()
+        self.parent_window = parent_window
         self.current_row = None
         self.ior_events = []
         self.key_name_cache = {}
         self.last_prev_row = None
         self.last_next_row = None
         self.init_ui()
-    
+
     def init_ui(self):
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
@@ -267,6 +268,17 @@ class EventStreamWidget(QWidget):
         self.table.verticalHeader().setVisible(True)
         self.table.verticalHeader().setFixedWidth(36)
         self.table.verticalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Disable editing
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        # Set selection behavior
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+
+        # Enable context menu
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         layout.addWidget(self.table)
 
@@ -426,6 +438,60 @@ class EventStreamWidget(QWidget):
         self.table.setRowCount(0)
         self.ior_events = []
         self.current_row = None
+
+    def show_context_menu(self, position):
+        """Show context menu for table row"""
+        item = self.table.itemAt(position)
+        if item:
+            row = item.row()
+            event = self.ior_events[row]
+            timestamp = event['timestamp_ms']
+            key_code = event['key_code']
+            event_type = event['event_type']
+            key_name = self.get_key_name(key_code)
+
+            menu = QMenu(self)
+            menu.setTitle(f"Event at {timestamp}ms")
+
+            # Navigation action - use default parameter to capture timestamp value
+            goto_action = QAction(f"⏱ Jump to {timestamp}ms", self)
+            goto_action.triggered.connect(lambda checked, ts=timestamp: self.goto_event(ts))
+            menu.addAction(goto_action)
+
+            menu.addSeparator()
+
+            # Copy actions - use default parameters to capture values
+            copy_timestamp_action = QAction("📋 Copy Timestamp", self)
+            copy_timestamp_action.triggered.connect(lambda checked, ts=timestamp: self.copy_to_clipboard(str(ts)))
+            menu.addAction(copy_timestamp_action)
+
+            copy_key_action = QAction(f"📋 Copy Key Code: {key_code}", self)
+            copy_key_action.triggered.connect(lambda checked, kc=key_code: self.copy_to_clipboard(str(kc)))
+            menu.addAction(copy_key_action)
+
+            copy_keyname_action = QAction(f"📋 Copy Key Name: {key_name}", self)
+            copy_keyname_action.triggered.connect(lambda checked, kn=key_name: self.copy_to_clipboard(kn))
+            menu.addAction(copy_keyname_action)
+
+            menu.addSeparator()
+
+            # Event info
+            info_action = QAction(f"ℹ️ {event_type} - {key_name} ({key_code})", self)
+            info_action.setEnabled(False)  # Just informational
+            menu.addAction(info_action)
+
+            menu.exec(self.table.mapToGlobal(position))
+
+    def copy_to_clipboard(self, text):
+        """Copy text to clipboard"""
+        from PyQt6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+
+    def goto_event(self, timestamp):
+        """Jump to specific event timestamp"""
+        if self.parent_window and self.parent_window.media_player:
+            self.parent_window.media_player.setPosition(timestamp)
 
 
 class ViewerWindow(QMainWindow):
@@ -638,9 +704,6 @@ class ViewerWindow(QMainWindow):
         self.setWindowTitle("Input Overlay Recorder Viewer")
         self.setGeometry(100, 100, 1400, 800)
 
-        # Create menu bar (keep for shortcuts but main buttons in UI)
-        self.create_menu()
-
         # Main widget
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -748,7 +811,7 @@ class ViewerWindow(QMainWindow):
         right_layout.addWidget(self.key_state_widget)
 
         # Event stream widget
-        self.event_stream_widget = EventStreamWidget()
+        self.event_stream_widget = EventStreamWidget(parent_window=self)
         right_layout.addWidget(self.event_stream_widget)
 
         splitter.addWidget(right_widget)
@@ -826,32 +889,6 @@ class ViewerWindow(QMainWindow):
         
         # Status bar
         self.statusBar().showMessage("Ready - Load a video or IOR file to begin")
-    
-    def create_menu(self):
-        """Create menu bar"""
-        menubar = self.menuBar()
-        
-        # File menu
-        file_menu = menubar.addMenu("&File")
-        
-        load_video_action = QAction("Load &Video...", self)
-        load_video_action.setShortcut("Ctrl+V")
-        load_video_action.setStatusTip("Load video file (auto-loads .ior if present)")
-        load_video_action.triggered.connect(self.load_video)
-        file_menu.addAction(load_video_action)
-        
-        load_ior_action = QAction("Load &IOR File...", self)
-        load_ior_action.setShortcut("Ctrl+I")
-        load_ior_action.setStatusTip("Load IOR file (auto-loads video if present)")
-        load_ior_action.triggered.connect(self.load_ior)
-        file_menu.addAction(load_ior_action)
-        
-        file_menu.addSeparator()
-        
-        exit_action = QAction("&Exit", self)
-        exit_action.setShortcut("Ctrl+Q")
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
     
     def setup_connections(self):
         """Setup signal connections"""
