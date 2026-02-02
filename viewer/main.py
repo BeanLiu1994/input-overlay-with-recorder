@@ -33,6 +33,7 @@ class IORParser:
         self.filepath = filepath
         self.events = []
         self.start_time = 0
+        self.pause_events = []  # Track PAUSE/RESUME events for time alignment
         self._parse()
     
     def _parse(self):
@@ -40,22 +41,41 @@ class IORParser:
         with open(self.filepath, 'r') as f:
             for line in f:
                 parts = line.strip().split()
-                if len(parts) >= 3:
+                if len(parts) >= 1:
                     timestamp_ms = int(parts[0])
-                    event_type = parts[1]
-                    key_code = int(parts[2])
                     
-                    # Get start time from first event
-                    if self.start_time == 0:
-                        self.start_time = int(parts[3]) if len(parts) > 3 else 0
+                    # Handle PAUSE and RESUME lines
+                    if len(parts) >= 2 and parts[1] in ['PAUSE', 'RESUME']:
+                        event_type = parts[1]
+                        self.pause_events.append({
+                            'timestamp_ms': timestamp_ms,
+                            'event_type': event_type,
+                            'row_index': len(self.events)
+                        })
+                        continue
                     
-                    self.events.append({
-                        'timestamp_ms': timestamp_ms,
-                        'event_type': event_type,
-                        'key_code': key_code,
-                        'start_time': int(parts[3]) if len(parts) > 3 else self.start_time,
-                        'row_index': len(self.events)  # Store original row index
-                    })
+                    # Handle regular events
+                    if len(parts) >= 3:
+                        event_type = parts[1]
+                        key_code = int(parts[2])
+                        
+                        # Get start time from first event
+                        if self.start_time == 0:
+                            self.start_time = int(parts[3]) if len(parts) > 3 else 0
+                        
+                        self.events.append({
+                            'timestamp_ms': timestamp_ms,
+                            'event_type': event_type,
+                            'key_code': key_code,
+                            'start_time': int(parts[3]) if len(parts) > 3 else self.start_time,
+                            'row_index': len(self.events),  # Store original row index
+                            'original_timestamp': timestamp_ms  # Store original timestamp for display
+                        })
+        
+        # Apply time alignment to all events after parsing
+        for event in self.events:
+            aligned_time, _ = self.align_timepoint(event['original_timestamp'])
+            event['timestamp_ms'] = aligned_time
     
     def get_events_at_time(self, timestamp_ms):
         """Get events at a specific timestamp (within small window)"""
@@ -91,6 +111,52 @@ class IORParser:
                 closest_event = event
         
         return closest_event['row_index'] if closest_event else None
+    
+    def align_timepoint(self, timestamp_ms):
+        """Align timestamp accounting for PAUSE/RESUME events
+        
+        Events between PAUSE and RESUME are treated as having no duration - 
+        they are all aligned to the pause start time.
+        
+        Returns: (aligned_time_ms, original_time_ms)"""
+        if not self.pause_events:
+            return timestamp_ms, timestamp_ms
+        
+        aligned_time = timestamp_ms
+        total_pause_duration = 0
+        pause_start = None
+        
+        for pause_event in self.pause_events:
+            if pause_event['event_type'] == 'PAUSE':
+                if pause_start is None and pause_event['timestamp_ms'] < timestamp_ms:
+                    pause_start = pause_event['timestamp_ms']
+            elif pause_event['event_type'] == 'RESUME':
+                if pause_start is not None:
+                    resume_time = pause_event['timestamp_ms']
+                    
+                    # Check if timestamp is during this pause (between PAUSE and RESUME)
+                    if pause_start < timestamp_ms < resume_time:
+                        # Event is during pause - align it to pause start time
+                        # (no duration between pause and resume)
+                        aligned_time = pause_start - total_pause_duration
+                        return aligned_time, timestamp_ms
+                    
+                    # Calculate pause duration
+                    pause_duration = resume_time - pause_start
+                    # Only subtract if the timestamp is after this resume point
+                    if timestamp_ms >= resume_time:
+                        total_pause_duration += pause_duration
+                    pause_start = None
+        
+        # Subtract total pause duration to get aligned time
+        aligned_time = timestamp_ms - total_pause_duration
+        
+        return aligned_time, timestamp_ms
+    
+    def get_aligned_events_at_time(self, timestamp_ms):
+        """Get events at a specific timestamp with time alignment"""
+        aligned_time, original_time = self.align_timepoint(timestamp_ms)
+        return [e for e in self.events if abs(e['timestamp_ms'] - aligned_time) < 50]
 
 
 class KeyStateWidget(QWidget):
@@ -259,8 +325,8 @@ class EventStreamWidget(QWidget):
         layout.addWidget(title)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Time (ms)", "Type", "Key Code", "Key Name", "Current"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["Time (ms)", "Original Time", "Type", "Key Code", "Key Name", "Current"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setDefaultSectionSize(24)
 
@@ -321,17 +387,26 @@ class EventStreamWidget(QWidget):
         self.table.setRowCount(len(events))
         
         for i, event in enumerate(events):
+            # Processed timestamp (aligned for video playback)
             self.table.setItem(i, 0, QTableWidgetItem(str(event['timestamp_ms'])))
-            self.table.setItem(i, 1, QTableWidgetItem(event['event_type']))
-            self.table.setItem(i, 2, QTableWidgetItem(str(event['key_code'])))
-            self.table.setItem(i, 3, QTableWidgetItem(self.get_key_name(event['key_code'])))
-            self.table.setItem(i, 4, QTableWidgetItem(""))
+            # Original timestamp (from IOR file, includes PAUSE/RESUME gaps)
+            original_time = event.get('original_timestamp', event['timestamp_ms'])
+            self.table.setItem(i, 1, QTableWidgetItem(str(original_time)))
+            self.table.setItem(i, 2, QTableWidgetItem(event['event_type']))
+            self.table.setItem(i, 3, QTableWidgetItem(str(event['key_code'])))
+            self.table.setItem(i, 4, QTableWidgetItem(self.get_key_name(event['key_code'])))
+            self.table.setItem(i, 5, QTableWidgetItem(""))
             
             # Clear arrow for all rows initially
             self.table.setVerticalHeaderItem(i, QTableWidgetItem(""))
     
     def update_current_event(self, current_time_ms):
-        """Update the current event indicator based on timestamp"""
+        """Update the current event indicator based on timestamp
+        Note: current_time_ms is video playback time (processed time without pauses)
+        and event['timestamp_ms'] is also processed time, so we compare them directly"""
+        if not self.ior_events:
+            return
+        
         # Find last event before current time and next event after current time
         prev_row = -1  # -1 means before the first event
         next_row = -1  # -1 means after the last event
@@ -371,7 +446,7 @@ class EventStreamWidget(QWidget):
     def _clear_highlight(self, row):
         """Clear highlight from a row"""
         if row >= 0 and row < len(self.ior_events):
-            for col in range(5):
+            for col in range(6):
                 item = self.table.item(row, col)
                 if item:
                     item.setBackground(Qt.GlobalColor.transparent)
@@ -411,7 +486,7 @@ class EventStreamWidget(QWidget):
             self.table.setVerticalHeaderItem(row, arrow_item)
 
             # Highlight row background
-            for col in range(5):
+            for col in range(6):
                 item = self.table.item(row, col)
                 if item:
                     item.setBackground(bg_brush)
@@ -431,7 +506,7 @@ class EventStreamWidget(QWidget):
             font.setFamily("SF Mono, Monaco, Consolas, monospace")
             font.setPointSize(11)
             current_item.setFont(font)
-            self.table.setItem(row, 4, current_item)
+            self.table.setItem(row, 5, current_item)
     
     def clear(self):
         """Clear the event stream"""
