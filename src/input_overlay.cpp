@@ -105,6 +105,20 @@ static void frontend_event_callback(enum obs_frontend_event event, void *private
             }
             break;
             
+        case OBS_FRONTEND_EVENT_RECORDING_PAUSED:
+            binfo("Recording paused - pausing event recorder");
+            if (recorder::g_recorder) {
+                recorder::pause_recording();
+            }
+            break;
+            
+        case OBS_FRONTEND_EVENT_RECORDING_UNPAUSED:
+            binfo("Recording resumed - resuming event recorder");
+            if (recorder::g_recorder) {
+                recorder::resume_recording();
+            }
+            break;
+            
         default:
             break;
     }

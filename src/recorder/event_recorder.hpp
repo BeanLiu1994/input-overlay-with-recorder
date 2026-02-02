@@ -41,7 +41,9 @@ enum class EventType : uint8_t {
     GAMEPAD_BUTTON_PRESS,
     GAMEPAD_BUTTON_RELEASE,
     GAMEPAD_AXIS,
-    SLEEP // Time delay between events
+    SLEEP,   // Time delay between events
+    PAUSE,   // Recording paused
+    RESUME   // Recording resumed
 };
 
 // Recorded event structure
@@ -153,6 +155,7 @@ class EventRecorder {
 private:
     LockFreeQueue<RecordedEvent> event_queue;
     std::atomic<bool> is_recording;
+    std::atomic<bool> is_paused;
     std::atomic<bool> should_stop_writer;
     std::thread writer_thread;
     std::string output_file_path;
@@ -185,8 +188,17 @@ public:
     // Stop recording - stops writer thread and saves remaining events
     void stop_recording();
     
+    // Pause recording - stops recording events but keeps writer thread alive
+    void pause_recording();
+    
+    // Resume recording - resumes recording events and tracks pause duration
+    void resume_recording();
+    
     // Check if currently recording
     bool recording() const { return is_recording.load(std::memory_order_acquire); }
+    
+    // Check if currently paused
+    bool paused() const { return is_paused.load(std::memory_order_acquire); }
     
     // Record events
     void record_keyboard_event(uint16_t keycode, bool pressed, uint64_t timestamp);
@@ -217,7 +229,12 @@ void cleanup();
 void start_recording(const std::string& output_path);
 void stop_recording();
 
+// Pause/resume recording
+void pause_recording();
+void resume_recording();
+
 // Check if recording
 bool is_recording();
+bool is_paused();
 
 } // namespace recorder

@@ -20,3 +20,5 @@ client/build-*/
 cmake/.CMakeBuildNumber
 /build_x86_64/
 output/
+
+viewer/venv

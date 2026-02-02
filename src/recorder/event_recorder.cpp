@@ -17,6 +17,7 @@
  *************************************************************************/
 
 #include "event_recorder.hpp"
+#include <obs-module.h>
 #include "../util/log.h"
 #include "../util/config.hpp"
 #include <util/platform.h>
@@ -30,6 +31,7 @@ std::unique_ptr<EventRecorder> g_recorder = nullptr;
 
 EventRecorder::EventRecorder()
     : is_recording(false)
+    , is_paused(false)
     , should_stop_writer(false)
     , recording_start_time(0)
     , last_event_time(0)
@@ -44,15 +46,12 @@ EventRecorder::EventRecorder()
     uint64_t current_sdl_time = SDL_GetTicksNS();
     sdl_init_time_offset = current_unix_time - current_sdl_time;
     
-    binfo("[EventRecorder] Constructor called");
-    binfo("[EventRecorder] SDL init time offset: %llu ns", (unsigned long long)sdl_init_time_offset);
+    binfo("[EventRecorder] Initialized with SDL time offset: %llu ns", (unsigned long long)sdl_init_time_offset);
 }
 
 EventRecorder::~EventRecorder()
 {
-    binfo("[EventRecorder] Destructor called");
     if (is_recording.load(std::memory_order_acquire)) {
-        bwarn("[EventRecorder] Still recording in destructor, stopping...");
         stop_recording();
     }
 }
@@ -64,17 +63,10 @@ void EventRecorder::start_recording(const std::string& output_path)
         stop_recording();
     }
 
-    binfo("[EventRecorder] ========================================");
-    binfo("[EventRecorder] Starting event recording");
-    binfo("[EventRecorder] Output file: %s", output_path.c_str());
-    binfo("[EventRecorder] Using uiohook for cross-platform capture");
+    binfo("[EventRecorder] Starting recording to: %s", output_path.c_str());
     
     // Clear the queue
-    size_t old_queue_size = event_queue.size();
     event_queue.clear();
-    if (old_queue_size > 0) {
-        binfo("[EventRecorder] Cleared %zu old events from queue", old_queue_size);
-    }
     
     // Clear all key states (assume all keys are released at start)
     {
@@ -93,14 +85,11 @@ void EventRecorder::start_recording(const std::string& output_path)
     last_event_time = recording_start_time;
     
     is_recording.store(true, std::memory_order_release);
+    is_paused.store(false, std::memory_order_release);
     should_stop_writer.store(false, std::memory_order_release);
     
     // Start writer thread
     writer_thread = std::thread(&EventRecorder::writer_thread_func, this);
-    binfo("[EventRecorder] Writer thread started");
-    
-    binfo("[EventRecorder] Recording is now ACTIVE");
-    binfo("[EventRecorder] ========================================");
 }
 
 void EventRecorder::stop_recording()
@@ -110,34 +99,69 @@ void EventRecorder::stop_recording()
         return;
     }
 
-    binfo("[EventRecorder] ========================================");
-    binfo("[EventRecorder] Stopping event recording");
-    
-    size_t remaining_events = event_queue.size();
-    binfo("[EventRecorder] Queue has %zu events remaining to save", remaining_events);
+    binfo("[EventRecorder] Stopping recording (%zu events remaining)", event_queue.size());
     
     is_recording.store(false, std::memory_order_release);
     should_stop_writer.store(true, std::memory_order_release);
     
     // Wait for writer thread to finish
     if (writer_thread.joinable()) {
-        binfo("[EventRecorder] Waiting for writer thread to finish...");
         writer_thread.join();
-        binfo("[EventRecorder] Writer thread joined successfully");
     }
     
     uint64_t recording_duration = os_gettime_ns() - recording_start_time;
     double duration_seconds = recording_duration / 1000000000.0;
-    binfo("[EventRecorder] Recording duration: %.2f seconds", duration_seconds);
-    binfo("[EventRecorder] Final queue size: %zu events", event_queue.size());
-    binfo("[EventRecorder] Recording stopped successfully");
-    binfo("[EventRecorder] ========================================");
+    binfo("[EventRecorder] Recording stopped (%.2f seconds)", duration_seconds);
+}
+
+void EventRecorder::pause_recording()
+{
+    if (!is_recording.load(std::memory_order_acquire)) {
+        bwarn("[EventRecorder] Cannot pause: not recording");
+        return;
+    }
+    
+    if (is_paused.load(std::memory_order_acquire)) {
+        bwarn("[EventRecorder] Already paused");
+        return;
+    }
+    
+    // Record PAUSE event
+    RecordedEvent event;
+    event.type = EventType::PAUSE;
+    event.timestamp = os_gettime_ns();
+    event_queue.enqueue(event);
+    
+    is_paused.store(true, std::memory_order_release);
+    
+    binfo("[EventRecorder] Recording paused");
+}
+
+void EventRecorder::resume_recording()
+{
+    if (!is_recording.load(std::memory_order_acquire)) {
+        bwarn("[EventRecorder] Cannot resume: not recording");
+        return;
+    }
+    
+    if (!is_paused.load(std::memory_order_acquire)) {
+        bwarn("[EventRecorder] Not paused");
+        return;
+    }
+    
+    // Record RESUME event
+    RecordedEvent event;
+    event.type = EventType::RESUME;
+    event.timestamp = os_gettime_ns();
+    event_queue.enqueue(event);
+    
+    is_paused.store(false, std::memory_order_release);
+    
+    binfo("[EventRecorder] Recording resumed");
 }
 
 void EventRecorder::writer_thread_func()
 {
-    binfo("[EventRecorder] Writer thread started");
-    
     // First, create the file and write the START line
     std::ofstream file(output_file_path, std::ios::trunc); // Create/truncate file
     if (file.is_open()) {
@@ -150,7 +174,6 @@ void EventRecorder::writer_thread_func()
         
         file.write(start_line, strlen(start_line));
         file.close();
-        binfo("[EventRecorder] Wrote START line: 0 START %llu (Unix epoch ms)", (unsigned long long)recording_start_time_ms);
     } else {
         berr("[EventRecorder] Failed to create output file: %s", output_file_path.c_str());
         // Continue anyway - save_to_file will try to create it
@@ -173,7 +196,6 @@ void EventRecorder::writer_thread_func()
             batch.push_back(event);
             has_events = true;
             
-            // Flush if batch is large enough
             if (batch.size() >= 1000) {
                 break;
             }
@@ -186,14 +208,11 @@ void EventRecorder::writer_thread_func()
         if (has_events && (should_flush || batch.size() >= 1000)) {
             flush_count++;
             size_t batch_size = batch.size();
-            binfo("[EventRecorder] Flush #%zu: Saving %zu events to file (queue size: %zu)", 
-                  flush_count, batch_size, event_queue.size());
             
             if (save_to_file(batch)) {
                 total_events_saved += batch_size;
                 batch.clear();
                 last_flush = now;
-                binfo("[EventRecorder] Successfully saved batch. Total events saved: %zu", total_events_saved);
             } else {
                 berr("[EventRecorder] Failed to save events to file");
             }
@@ -207,14 +226,10 @@ void EventRecorder::writer_thread_func()
     
     // Final flush
     if (!batch.empty()) {
-        binfo("[EventRecorder] Final flush: Saving %zu remaining events", batch.size());
         if (save_to_file(batch)) {
             total_events_saved += batch.size();
-            binfo("[EventRecorder] Final flush successful");
         }
     }
-    
-    binfo("[EventRecorder] Writer thread finished. Total events saved: %zu", total_events_saved);
 }
 
 bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
@@ -229,12 +244,13 @@ bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
         return false;
     }
     
-    // Write events in ASCII text format
     size_t bytes_written = 0;
+    
     for (const auto& event : events) {
         std::string line;
         
         // Calculate relative timestamp in milliseconds from recording start
+        // DO NOT adjust for pause - the replay system will handle PAUSE/RESUME events
         uint64_t relative_time_ms = (event.timestamp - recording_start_time) / 1000000ULL;
         
         // Format: timestamp_ms event_type event_data
@@ -279,6 +295,12 @@ bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
                         std::to_string(event.data.gamepad_axis.axis) + " " +
                         std::to_string(event.data.gamepad_axis.value);
                 break;
+            case EventType::PAUSE:
+                line += "PAUSE";
+                break;
+            case EventType::RESUME:
+                line += "RESUME";
+                break;
             case EventType::SLEEP:
                 // Skip SLEEP events - timing is handled by timestamps
                 continue;
@@ -295,10 +317,8 @@ bool EventRecorder::save_to_file(const std::vector<RecordedEvent>& events)
     file.flush();
     bool success = file.good();
     
-    if (success) {
-        binfo("[EventRecorder] Wrote %zu bytes (%zu events) to file", bytes_written, events.size());
-    } else {
-        berr("[EventRecorder] File write failed after writing %zu bytes", bytes_written);
+    if (!success) {
+        berr("[EventRecorder] File write failed");
     }
     
     return success;
@@ -338,20 +358,6 @@ void EventRecorder::record_keyboard_event(uint16_t keycode, bool pressed, uint64
     event.data.keyboard.keycode = keycode;
     
     event_queue.enqueue(event);
-    
-    // Log timing precision for debugging
-    static size_t keyboard_event_count = 0;
-    static uint64_t last_keyboard_time = 0;
-    keyboard_event_count++;
-    
-    if (keyboard_event_count <= 10 || keyboard_event_count % 100 == 0) {
-        uint64_t interval_ns = last_keyboard_time > 0 ? (timestamp - last_keyboard_time) : 0;
-        double interval_ms = interval_ns / 1000000.0;
-        binfo("[EventRecorder] Keyboard event #%zu: keycode=%u, pressed=%d, interval=%.3fms (queue: %zu)", 
-              keyboard_event_count, keycode, pressed, interval_ms, event_queue.size());
-    }
-    
-    last_keyboard_time = timestamp;
     last_event_time = timestamp;
 }
 
@@ -375,13 +381,6 @@ void EventRecorder::record_mouse_button_event(uint16_t button, int16_t x, int16_
     
     event_queue.enqueue(event);
     last_event_time = timestamp;
-    
-    static size_t mouse_button_count = 0;
-    mouse_button_count++;
-    if (mouse_button_count % 50 == 0) {
-        binfo("[EventRecorder] Recorded %zu mouse button events (queue: %zu)", 
-              mouse_button_count, event_queue.size());
-    }
 }
 
 void EventRecorder::record_mouse_move_event(int16_t x, int16_t y, int16_t dx, int16_t dy, uint64_t timestamp)
@@ -540,27 +539,17 @@ void init()
 {
     if (!g_recorder) {
         g_recorder = std::make_unique<EventRecorder>();
-        binfo("[EventRecorder] ========================================");
-        binfo("[EventRecorder] Event recorder module initialized");
-        binfo("[EventRecorder] Ready to record input events");
-        binfo("[EventRecorder] ========================================");
-    } else {
-        binfo("[EventRecorder] Already initialized");
+        binfo("[EventRecorder] Module initialized");
     }
 }
 
 void cleanup()
 {
     if (g_recorder) {
-        binfo("[EventRecorder] ========================================");
-        binfo("[EventRecorder] Cleaning up event recorder");
         if (g_recorder->recording()) {
-            binfo("[EventRecorder] Recording still active, stopping...");
             g_recorder->stop_recording();
         }
         g_recorder.reset();
-        binfo("[EventRecorder] Event recorder cleaned up successfully");
-        binfo("[EventRecorder] ========================================");
     }
 }
 
@@ -582,9 +571,32 @@ void stop_recording()
     }
 }
 
+void pause_recording()
+{
+    if (g_recorder) {
+        g_recorder->pause_recording();
+    } else {
+        bwarn("[EventRecorder] Cannot pause recording: recorder not initialized!");
+    }
+}
+
+void resume_recording()
+{
+    if (g_recorder) {
+        g_recorder->resume_recording();
+    } else {
+        bwarn("[EventRecorder] Cannot resume recording: recorder not initialized!");
+    }
+}
+
 bool is_recording()
 {
     return g_recorder && g_recorder->recording();
+}
+
+bool is_paused()
+{
+    return g_recorder && g_recorder->paused();
 }
 
 } // namespace recorder
