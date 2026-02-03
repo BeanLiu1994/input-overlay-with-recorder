@@ -751,6 +751,7 @@ class ViewerWindow(QMainWindow):
         self.video_path = None
         self.ior_path = None
         self.ior_parser = None
+        self.video_fps = 30.0  # Default to 30fps, will be updated from Qt metadata
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.media_player.setAudioOutput(self.audio_output)
@@ -992,6 +993,7 @@ class ViewerWindow(QMainWindow):
         # Media player signals
         self.media_player.positionChanged.connect(self.position_changed)
         self.media_player.durationChanged.connect(self.duration_changed)
+        self.media_player.mediaStatusChanged.connect(self.media_status_changed)
 
         # Keyboard shortcuts
         space_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
@@ -1005,6 +1007,10 @@ class ViewerWindow(QMainWindow):
         
         if file_path:
             self.video_path = file_path
+            
+            # Video FPS will be obtained from Qt metadata when media loads
+            self.statusBar().showMessage(f"Loading video...")
+            
             self.media_player.setSource(QUrl.fromLocalFile(file_path))
             self.statusBar().showMessage(f"Loaded video: {Path(file_path).name}")
             
@@ -1069,6 +1075,48 @@ class ViewerWindow(QMainWindow):
             # Initialize display (includes event loading)
             self.initialize_display()
     
+    def media_status_changed(self, status):
+        """Handle media status changes - print metadata when loaded"""
+        from PyQt6.QtMultimedia import QMediaMetaData
+        
+        print(f"\n[Media Status Changed]: {status}")
+        
+        # Check if media is loaded
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            print("\n=== Qt Metadata Test (After LoadedMedia) ===")
+            
+            # Get metadata from media player
+            metadata = self.media_player.metaData()
+            
+            # Try to get video frame rate
+            fps = metadata.value(QMediaMetaData.Key.VideoFrameRate)
+            print(f"VideoFrameRate from Qt: {fps}")
+            
+            # Try to get duration
+            duration = metadata.value(QMediaMetaData.Key.Duration)
+            print(f"Duration from Qt: {duration}")
+            
+            # Try to get video codec
+            codec = metadata.value(QMediaMetaData.Key.VideoCodec)
+            print(f"VideoCodec from Qt: {codec}")
+            
+            # Try to get resolution
+            resolution = metadata.value(QMediaMetaData.Key.Resolution)
+            print(f"Resolution from Qt: {resolution}")
+            
+            # Try to get video bit rate
+            bitrate = metadata.value(QMediaMetaData.Key.VideoBitRate)
+            print(f"VideoBitRate from Qt: {bitrate}")
+            
+            print("=== End Qt Metadata Test ===\n")
+            
+            # Use Qt-provided FPS
+            if fps is not None and fps > 0:
+                print(f"✅ Using Qt FPS: {fps}")
+                self.video_fps = fps
+            else:
+                print(f"⚠️ Qt did not provide FPS, using default: {self.video_fps}")
+    
     def check_ready(self):
         """Check if both video and IOR are loaded"""
         if self.video_path and self.ior_parser:
@@ -1123,16 +1171,18 @@ class ViewerWindow(QMainWindow):
         self.event_stream_widget.clear()
     
     def previous_frame(self):
-        """Go to previous frame"""
+        """Go to previous frame using FPS-based time calculation"""
         current_pos = self.media_player.position()
-        new_pos = max(0, current_pos - 33)  # ~30fps = 33ms per frame
+        frame_duration_ms = int(1000.0 / self.video_fps)
+        new_pos = max(0, current_pos - frame_duration_ms)
         self.media_player.setPosition(new_pos)
     
     def next_frame(self):
-        """Go to next frame"""
+        """Go to next frame using FPS-based time calculation"""
         current_pos = self.media_player.position()
         duration = self.media_player.duration()
-        new_pos = min(duration, current_pos + 33)  # ~30fps = 33ms per frame
+        frame_duration_ms = int(1000.0 / self.video_fps)
+        new_pos = min(duration, current_pos + frame_duration_ms)
         self.media_player.setPosition(new_pos)
     
     def previous_event(self):
